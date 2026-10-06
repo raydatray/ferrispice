@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+    <head>
+        <link
+            rel="stylesheet"
+            href="https://s.brightspace.com/lib/fonts/0.6.1/fonts.css"
+        />
+        <link
+            rel="stylesheet"
+            href="https://templates.lcs.brightspace.com/lib/assets/css/styles.min.css"
+        />
+    </head>
+    <body
+        style="
+            color: rgb(32, 33, 34);
+            font-family: Lato, sans-serif;
+            font-size: 12px;
+        "
+    >
+        <p style="text-align: center">
+            <strong><span style="font-size: 24px"></span></strong>
+        </p>
+        <p style="text-align: center">
+            <strong
+                ><span style="font-size: 24px">ECSE 472 Project</span></strong
+            ><br /><strong
+                ><span style="font-size: 24px">Deliverable 1</span></strong
+            >
+        </p>
+        <p><strong>General description</strong></p>
+        <p>
+            The objective of this deliverable is to generate the MNA matrices
+            from a given netlist and run linear DC analysis. The input to your
+            program is a netlist that describes the circuit that you intend to
+            simulate, and the outputs are the unknown voltages and currents.
+        </p>
+        <p><strong>The circuit netlist&nbsp;</strong></p>
+        <p>Below is an example of a netlist:</p>
+        <p>
+            <span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >Name of circuit<br /></span
+            ><span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >Vin n1 0 DC 6</span
+            ><br /><span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >R1 n1 n2 100</span
+            ><br /><span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >R2 n2 0 50<br /></span
+            ><span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >.end</span
+            >
+        </p>
+        <p>
+            The first line is always ignored, since it is used to indicate the
+            name of the circuit you are simulating. The last line must always be
+            "<span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >.end</span
+            >" to indicate the end of the netlist.&nbsp;
+        </p>
+        <p><strong>The MNA matrices</strong></p>
+        <p>
+            Your program should read the input netlist, determine which
+            information from the netlist is needed, and then create the MNA
+            matrices. For this deliverable, you are required to implement the
+            stamps for all the circuit elements discussed in class:
+        </p>
+        <ol>
+            <li>Voltage source (must start with V in the netlist)</li>
+            <li>Current source (must start with I in the netlist)</li>
+            <li>Resistor (must start with R in the netlist)</li>
+            <li>Capacitor (must start with C in the netlist)</li>
+            <li>Inductor (must start with L in the netlist)</li>
+            <li>
+                Voltage-controlled voltage source (must start with VCVS in the
+                netlist)
+            </li>
+            <li>
+                Current-controlled voltage source (must start with CCVS in the
+                netlist)
+            </li>
+            <li>
+                Voltage-controlled current source (must start with VCCS in the
+                netlist)
+            </li>
+            <li>
+                Current-controlled current source (must start with CCCS in the
+                netlist)
+            </li>
+        </ol>
+        <p>*no need to implement the diode stamp for this deliverable.</p>
+        <p><strong>Linear DC analysis</strong></p>
+        <p>
+            Your program should run linear DC analysis. To do so, the user adds
+            the command "<span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >.dc<span style="font-family: Lato, sans-serif"
+                    >" to the netlist anywhere before the "<span
+                        style="
+                            font-family:
+                                &quot;courier new&quot;, courier, sans-serif;
+                        "
+                        >.end</span
+                    >" command.</span
+                ></span
+            >
+        </p>
+        <p><strong>Deliverables</strong></p>
+        <p>
+            To receive grades for this assessment, you must deliver two things:
+        </p>
+        <ol>
+            <li>Upload your code to myCourses by the deadline.</li>
+            <li>
+                Schedule a one-on-one time together during the week of Monday
+                October 19 to run the code you submitted.
+            </li>
+        </ol>
+        <p>
+            If you have any questions, please post on the discussion boards or
+            drop by my office.
+        </p>
+    </body>
+</html>

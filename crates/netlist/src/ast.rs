@@ -39,9 +39,37 @@ pub struct ParsedElement {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParsedKind {
-    Resistor { resistance: f64 },
-    Capacitor { capacitance: f64 },
-    Inductor { inductance: f64 },
-    VoltageSource { dc: f64 },
-    CurrentSource { dc: f64 },
+    Resistor {
+        resistance: f64,
+    },
+    Capacitor {
+        capacitance: f64,
+    },
+    Inductor {
+        inductance: f64,
+    },
+    VoltageSource {
+        dc: f64,
+    },
+    CurrentSource {
+        dc: f64,
+    },
+    Vcvs {
+        control_positive: String,
+        control_negative: String,
+        gain: f64,
+    },
+    Vccs {
+        control_positive: String,
+        control_negative: String,
+        transconductance: f64,
+    },
+    Ccvs {
+        control: String,
+        transresistance: f64,
+    },
+    Cccs {
+        control: String,
+        gain: f64,
+    },
 }

@@ -1,6 +1,7 @@
 mod error;
 mod number;
 mod position;
+mod scan;
 mod span;
 mod token;
 

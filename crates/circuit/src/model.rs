@@ -103,7 +103,7 @@ impl ElementKind {
     }
 }
 
-/// IDs are scoped to this circuit, lookup is case-insensitive
+/// resolved circuit, IDs are scoped to this circuit, lookup is case-insensitive
 #[derive(Clone)]
 pub struct Circuit {
     title: String,
@@ -114,6 +114,22 @@ pub struct Circuit {
 }
 
 impl Circuit {
+    pub(crate) fn new(
+        title: String,
+        nodes: Vec<Node>,
+        elements: Vec<Element>,
+        node_ids: HashMap<String, NodeId>,
+        element_ids: HashMap<String, ElementId>,
+    ) -> Self {
+        Self {
+            title,
+            nodes,
+            elements,
+            node_ids,
+            element_ids,
+        }
+    }
+
     pub fn title(&self) -> &str {
         &self.title
     }

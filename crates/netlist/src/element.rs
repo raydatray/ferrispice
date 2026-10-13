@@ -35,7 +35,52 @@ pub(crate) fn parse_element(record: RawElement<'_>) -> Result<ParsedElement, Par
         Family::CurrentSource => ParsedKind::CurrentSource {
             dc: parse_dc_source_value(&record, "Iname positive negative DC value")?,
         },
-        _ => return Err(unsupported(&record)),
+        Family::Vcvs => {
+            let gain = parse_element_value(
+                &record,
+                6,
+                "VCVSname positive negative control_positive control_negative gain",
+            )?;
+            ParsedKind::Vcvs {
+                control_positive: record.tokens[3].text.to_owned(),
+                control_negative: record.tokens[4].text.to_owned(),
+                gain,
+            }
+        }
+        Family::Vccs => {
+            let transconductance = parse_element_value(
+                &record,
+                6,
+                "VCCSname positive negative control_positive control_negative transconductance",
+            )?;
+            ParsedKind::Vccs {
+                control_positive: record.tokens[3].text.to_owned(),
+                control_negative: record.tokens[4].text.to_owned(),
+                transconductance,
+            }
+        }
+        Family::Ccvs => {
+            let transresistance = parse_element_value(
+                &record,
+                5,
+                "CCVSname positive negative controlling_element transresistance",
+            )?;
+            ParsedKind::Ccvs {
+                control: record.tokens[3].text.to_owned(),
+                transresistance,
+            }
+        }
+        Family::Cccs => {
+            let gain = parse_element_value(
+                &record,
+                5,
+                "CCCSname positive negative controlling_element gain",
+            )?;
+            ParsedKind::Cccs {
+                control: record.tokens[3].text.to_owned(),
+                gain,
+            }
+        }
     };
 
     tracing::trace!(

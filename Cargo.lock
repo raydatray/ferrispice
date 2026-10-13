@@ -26,6 +26,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrispice-circuit"
+version = "0.1.0"
+dependencies = [
+ "ferrispice-netlist",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "ferrispice-netlist"
 version = "0.1.0"
 dependencies = [

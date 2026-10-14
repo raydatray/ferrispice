@@ -1,5 +1,14 @@
-use ferrispice_circuit::{CircuitErrorKind, ElementKind, GROUND, compile};
-use ferrispice_netlist::{NetlistPosition, parse};
+use ferrispice_circuit::{
+    CircuitError, ElementError, ElementErrorKind, ElementKind, GROUND, compile,
+};
+use ferrispice_netlist::{NetlistPosition, ParsedKind, ParsedNetlist, parse};
+
+fn element_error(parsed: &ParsedNetlist) -> ElementError {
+    match compile(parsed).unwrap_err() {
+        CircuitError::Element(error) => error,
+        other => panic!("expected an element error, found {other:?}"),
+    }
+}
 
 #[test]
 fn compiles_all_nine_kinds_and_control_only_nodes() {
@@ -118,12 +127,12 @@ fn case_insensitive_forward_references_preserve_declared_names() {
 
 #[test]
 fn duplicate_elements_include_both_declaration_locations() {
-    let error = compile(&parse("Duplicate\nR1 a 0 1\n  r1 b 0 2\n.end").unwrap()).unwrap_err();
+    let error = element_error(&parse("Duplicate\nR1 a 0 1\n  r1 b 0 2\n.end").unwrap());
     assert_eq!(error.location, NetlistPosition::new(3, 3));
     assert_eq!(error.element, "r1");
     assert_eq!(
         error.kind,
-        CircuitErrorKind::DuplicateElement {
+        ElementErrorKind::DuplicateElement {
             first: NetlistPosition::new(2, 1),
             first_span: ferrispice_netlist::ByteSpan::new("Duplicate\n".len(), "R1 a 0 1".len()),
         }
@@ -135,15 +144,117 @@ fn duplicate_elements_include_both_declaration_locations() {
 #[test]
 fn unknown_current_controller_is_a_semantic_error() {
     let parsed = parse("Missing\nCCCS1 a 0 absent 2\n.end").unwrap();
-    let error = compile(&parsed).unwrap_err();
+    let error = element_error(&parsed);
     assert_eq!(error.location.line, 2);
     assert_eq!(error.element, "CCCS1");
     assert_eq!(
         error.kind,
-        CircuitErrorKind::UnknownController {
+        ElementErrorKind::UnknownController {
             name: "absent".into()
         }
     );
+}
+
+#[test]
+fn rejects_controller_kinds_without_explicit_branch_currents() {
+    for (controller, name) in [
+        ("R1 b 0 1", "R1"),
+        ("C1 b 0 1", "C1"),
+        ("I1 b 0 DC 1", "I1"),
+        ("VCCS1 b 0 b 0 1", "VCCS1"),
+        ("CCCS2 b 0 Vsense 1", "CCCS2"),
+    ] {
+        let parsed = parse(&format!(
+            "Controller\nCCCS1 a 0 {name} 2\n{controller}\nVsense b 0 DC 0\n.end"
+        ))
+        .unwrap();
+        let error = element_error(&parsed);
+        assert_eq!(error.element, "CCCS1");
+        assert!(matches!(
+            error.kind,
+            ElementErrorKind::UnsupportedController { .. }
+        ));
+    }
+}
+
+#[test]
+fn accepts_each_agreed_branch_current_controller_kind() {
+    for (controller, name) in [
+        ("V1 b 0 DC 0", "V1"),
+        ("L1 b 0 1", "L1"),
+        ("VCVS1 b 0 b 0 1", "VCVS1"),
+        ("CCVS1 b 0 Vsense 1", "CCVS1"),
+    ] {
+        let parsed = parse(&format!(
+            "Controller\nCCCS1 a 0 {name} 2\n{controller}\nVsense b 0 DC 0\n.end"
+        ))
+        .unwrap();
+        let circuit = compile(&parsed).unwrap();
+        let ElementKind::Cccs { control, .. } = circuit.elements()[0].kind else {
+            panic!("expected CCCS");
+        };
+        assert_eq!(circuit.element(control).unwrap().name, name);
+    }
+}
+
+#[test]
+fn rejects_zero_resistance_and_negative_storage_parameters() {
+    for record in ["R1 a 0 0", "R1 a 0 -0"] {
+        let error = element_error(&parse(&format!("Invalid\n{record}\n.end")).unwrap());
+        assert_eq!(error.kind, ElementErrorKind::ZeroResistance);
+    }
+    for record in ["C1 a 0 -1e-6", "L1 a 0 -1"] {
+        let error = element_error(&parse(&format!("Invalid\n{record}\n.end")).unwrap());
+        assert!(matches!(
+            error.kind,
+            ElementErrorKind::NegativeParameter { .. }
+        ));
+    }
+}
+
+#[test]
+fn manually_constructed_syntax_cannot_bypass_finite_parameter_validation() {
+    let base = parse("Manual AST\nR1 a 0 1\nVsense b 0 DC 0\n.end").unwrap();
+    for kind in [
+        ParsedKind::Resistor {
+            resistance: f64::NAN,
+        },
+        ParsedKind::Capacitor {
+            capacitance: f64::INFINITY,
+        },
+        ParsedKind::Inductor {
+            inductance: f64::NEG_INFINITY,
+        },
+        ParsedKind::VoltageSource { dc: f64::NAN },
+        ParsedKind::CurrentSource { dc: f64::NAN },
+        ParsedKind::Vcvs {
+            control_positive: "b".into(),
+            control_negative: "0".into(),
+            gain: f64::NAN,
+        },
+        ParsedKind::Vccs {
+            control_positive: "b".into(),
+            control_negative: "0".into(),
+            transconductance: f64::NAN,
+        },
+        ParsedKind::Ccvs {
+            control: "Vsense".into(),
+            transresistance: f64::NAN,
+        },
+        ParsedKind::Cccs {
+            control: "Vsense".into(),
+            gain: f64::NAN,
+        },
+    ] {
+        let mut parsed = base.clone();
+        parsed.elements[0].kind = kind;
+        let error = element_error(&parsed);
+        assert_eq!(error.location.line, 2);
+        assert!(matches!(
+            error.kind,
+            ElementErrorKind::NonFiniteParameter { .. }
+        ));
+    }
 }
 
 #[test]
@@ -152,8 +263,8 @@ fn manually_constructed_syntax_cannot_introduce_invalid_names() {
     let mut parsed = base.clone();
     parsed.elements[0].name.clear();
     assert!(matches!(
-        compile(&parsed).unwrap_err().kind,
-        CircuitErrorKind::InvalidName {
+        element_error(&parsed).kind,
+        ElementErrorKind::InvalidName {
             field: "element",
             ..
         }
@@ -162,24 +273,77 @@ fn manually_constructed_syntax_cannot_introduce_invalid_names() {
     let mut parsed = base;
     parsed.elements[0].positive = "two names".into();
     assert!(matches!(
-        compile(&parsed).unwrap_err().kind,
-        CircuitErrorKind::InvalidName { field: "node", .. }
+        element_error(&parsed).kind,
+        ElementErrorKind::InvalidName { field: "node", .. }
     ));
 }
 
 #[test]
-fn compilation_does_not_guess_whether_a_topology_is_singular() {
-    let circuit = compile(&parse("Floating\nR1 a b 100\n.end").unwrap()).unwrap();
-    assert_eq!(circuit.non_ground_nodes().count(), 2);
-    assert_eq!(circuit.elements().len(), 1);
+fn compilation_does_not_guess_whether_a_grounded_topology_is_singular() {
+    let circuit = compile(&parse("Floating\nR1 a b 100\nR2 c 0 1\n.end").unwrap()).unwrap();
+    assert_eq!(circuit.non_ground_nodes().count(), 3);
+    assert_eq!(circuit.elements().len(), 2);
+}
+
+#[test]
+fn rejects_circuits_without_a_ground_terminal() {
+    for records in [
+        "R1 a b 100",
+        "R1 a b 100\nV1 b c DC 1",
+        // Sensing ground through a control port does not reference the circuit to it.
+        "R1 a b 1\nVCCS1 a b c 0 1\nVCVS1 c d 0 a 2",
+    ] {
+        let error = compile(&parse(&format!("Ungrounded\n{records}\n.end")).unwrap()).unwrap_err();
+        assert_eq!(error, CircuitError::MissingGround, "{records}");
+        assert!(error.to_string().contains("ground node 0"), "{records}");
+    }
+}
+
+#[test]
+fn any_ground_terminal_satisfies_the_reference_requirement() {
+    for records in ["R1 a 0 1", "I1 0 a DC 1\nR1 a b 1", "R1 0 0 1\nR2 a b 1"] {
+        compile(&parse(&format!("Grounded\n{records}\n.end")).unwrap())
+            .unwrap_or_else(|error| panic!("{records}: {error}"));
+    }
+}
+
+#[test]
+fn an_empty_circuit_needs_no_ground_terminal() {
+    let circuit = compile(&parse("Empty\n.end").unwrap()).unwrap();
+    assert_eq!(circuit.nodes().len(), 1);
+}
+
+#[test]
+fn element_errors_take_precedence_over_a_missing_ground() {
+    let error = element_error(&parse("Both\nR1 a b 0\n.end").unwrap());
+    assert_eq!(error.kind, ElementErrorKind::ZeroResistance);
+}
+
+#[test]
+fn semantic_errors_and_elements_preserve_their_record_spans() {
+    for (text, record) in [
+        (
+            "Title\r\n  CCCS1 α 0 missing 2\r\n.end\r\n",
+            "CCCS1 α 0 missing 2",
+        ),
+        ("Title\r\n  R1 α 0 0\r\n.end\r\n", "R1 α 0 0"),
+    ] {
+        let error = element_error(&parse(text).unwrap());
+        assert_eq!(error.location, NetlistPosition::new(2, 3));
+        assert_eq!(&text[error.span.range()], record);
+    }
+
+    let text = "Title\r\n  R1 α 0 100\r\n.end\r\n";
+    let circuit = compile(&parse(text).unwrap()).unwrap();
+    assert_eq!(&text[circuit.elements()[0].span.range()], "R1 α 0 100");
 }
 
 #[test]
 fn duplicate_errors_retain_both_declaration_spans() {
     let text = "Title\r\nR1 α 0 100\r\n  r1 β 0 50\r\n.end\r\n";
-    let error = compile(&parse(text).unwrap()).unwrap_err();
+    let error = element_error(&parse(text).unwrap());
     assert_eq!(&text[error.span.range()], "r1 β 0 50");
-    let CircuitErrorKind::DuplicateElement { first_span, .. } = error.kind else {
+    let ElementErrorKind::DuplicateElement { first_span, .. } = error.kind else {
         panic!("expected duplicate name");
     };
     assert_eq!(&text[first_span.range()], "R1 α 0 100");

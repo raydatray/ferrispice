@@ -11,6 +11,54 @@ fn element_error(parsed: &ParsedNetlist) -> ElementError {
 }
 
 #[test]
+fn divider_runs_from_netlist_to_validated_circuit() {
+    let parsed = parse(include_str!("../../../examples/voltage-divider.cir")).unwrap();
+    assert!(parsed.requests_dc());
+    let circuit = compile(&parsed).unwrap();
+
+    assert_eq!(circuit.title(), "Name of circuit");
+    assert_eq!(
+        circuit
+            .nodes()
+            .iter()
+            .map(|node| node.name.as_str())
+            .collect::<Vec<_>>(),
+        ["0", "n1", "n2"]
+    );
+    assert_eq!(circuit.non_ground_nodes().count(), 2);
+    assert_eq!(
+        circuit
+            .elements()
+            .iter()
+            .map(|element| element.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Vin", "R1", "R2"]
+    );
+    let n1 = circuit.find_node("N1").unwrap();
+    let n2 = circuit.find_node("n2").unwrap();
+    assert_eq!(circuit.find_node("0"), Some(GROUND));
+    assert!(GROUND.is_ground());
+    assert!(!n1.is_ground());
+
+    let voltage = circuit
+        .element(circuit.find_element("vin").unwrap())
+        .unwrap();
+    assert_eq!(voltage.positive, n1);
+    assert_eq!(voltage.negative, GROUND);
+    assert_eq!(voltage.kind, ElementKind::VoltageSource { dc: 6.0 });
+    assert!(voltage.kind.has_branch_current());
+
+    let resistor = &circuit.elements()[1];
+    assert_eq!(resistor.positive, n1);
+    assert_eq!(resistor.negative, n2);
+    assert_eq!(resistor.kind, ElementKind::Resistor { resistance: 100.0 });
+    assert!(!resistor.kind.has_branch_current());
+    assert_eq!(resistor.location, NetlistPosition::new(3, 1));
+    assert_eq!(circuit.find_node("missing"), None);
+    assert_eq!(circuit.find_element("missing"), None);
+}
+
+#[test]
 fn compiles_all_nine_kinds_and_control_only_nodes() {
     let parsed = parse("All kinds\nVCVS1 out 0 cp cn -2\nVCCS1 out 0 cp cn -1e-3\nCCVS1 out 0 Vsense -100\nCCCS1 out 0 Vsense -3\nVsense sense 0 DC 0\nR1 out 0 -10\nC1 cp 0 0\nL1 cn 0 0\nI1 out 0 DC -1\n.end").unwrap();
     let circuit = compile(&parsed).unwrap();

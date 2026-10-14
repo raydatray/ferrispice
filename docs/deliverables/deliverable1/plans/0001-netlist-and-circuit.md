@@ -208,15 +208,18 @@ support module can later supply the application CLI diagnostics.
 
 | Subject | Deliverable |
 | --- | --- |
-| `[1/9][d1][workspace] establish crate boundaries` | Workspace and binary with tracing initialization |
-| `[2/9][d1][netlist] introduce netlist positions and byte spans` | Introduce netlist crate; NetlistPosition and ByteSpan |
-| `[3/9][d1][netlist] parse finite numbers with structured errors` | Typed parser errors, decimal/scientific values, non-finite rejection |
-| `[4/9][d1][netlist] tokenize records with positions and spans` | Token extraction, character columns, absolute byte spans, record ranges |
-| `[5/9][d1][netlist] scan netlist structure and directives` | Raw records, title, comments, physical line offsets, `.dc`, `.end`, framing errors |
-| `[6/9][d1][netlist] parse passive and independent elements` | R, C, L, V, I records and precise syntax-error spans |
-| `[7/9][d1][netlist] parse controlled-source records` | Confirmed VCVS, VCCS, CCVS, and CCCS grammar with span-preserving parsing |
-| `[8/9][d1][circuit] resolve and validate circuit elements` | Introduce circuit crate; typed model, IDs, ground, references, validation, semantic-error spans |
-| `[9/9][d1][diagnostics] render source-aware netlist errors` | Miette reports in inspect; input names, source snippets, labels, and help |
+| `[1/12][d1][workspace] establish crate boundaries` | Workspace and binary with tracing initialization |
+| `[2/12][d1][netlist] introduce netlist positions and byte spans` | Introduce netlist crate; NetlistPosition and ByteSpan |
+| `[3/12][d1][netlist] parse finite numbers with structured errors` | Typed parser errors, decimal/scientific values, non-finite rejection |
+| `[4/12][d1][netlist] tokenize records with positions and spans` | Token extraction, character columns, absolute byte spans, record ranges |
+| `[5/12][d1][netlist] scan netlist structure and directives` | Raw records, title, comments, physical line offsets, `.dc`, `.end`, framing errors |
+| `[6/12][d1][netlist] parse passive and independent elements` | R, C, L, V, I records and precise syntax-error spans |
+| `[7/12][d1][netlist] parse controlled-source records` | Confirmed VCVS, VCCS, CCVS, and CCCS grammar with span-preserving parsing |
+| `[8/12][d1][circuit] introduce typed circuit model` | Introduce circuit crate; typed elements, IDs, ground, circuit storage, and lookup API |
+| `[9/12][d1][circuit] resolve node and element references` | Deterministic name registration, terminal and forward-controller resolution, duplicate-name errors, and source spans |
+| `[10/12][d1][circuit] validate parameters and current controllers` | Finite and physical parameter validation, branch-current controller checks, and semantic-error spans |
+| `[11/12][d1][circuit] add circuit inspection example` | Runnable divider, end-to-end compilation test, public API example, and development documentation |
+| `[12/12][d1][diagnostics] render source-aware netlist errors` | Miette reports in inspect; input names, source snippets, labels, and help |
 
 Every diff builds. Behavioral diffs include their relevant tests.
 

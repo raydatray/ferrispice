@@ -9,7 +9,8 @@ The application binary initializes tracing; libraries emit events without
 installing a subscriber.
 
 ```sh
-cargo test --workspace
+cargo test --workspace --all-targets
+cargo test --workspace --doc
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p ferrispice-circuit --example inspect -- examples/voltage-divider.cir
@@ -39,6 +40,10 @@ requests linear DC analysis. Blank lines and full-line `*` comments are
 ignored. Prefixes, directives, and `DC` are case-insensitive. Values use decimal
 or scientific notation.
 
+`NetlistPosition` identifies a line and character column in the input.
+`ByteSpan` identifies an exact UTF-8 byte range. These are input metadata,
+separate from circuit IDs and matrix indices.
+
 ```text
 R1 p n resistance
 C1 p n capacitance
@@ -56,6 +61,17 @@ The controlled-source argument order is the proposed convention from
 confirm it against class examples. A current controller must have an explicit
 branch-current unknown: a voltage source, inductor, VCVS, or CCVS. Forward
 references are supported.
+
+## Diagnostics
+
+The inspection example uses `miette` to render parser and compiler errors with
+the input name, source snippets, and highlighted ranges. Duplicate-name reports
+show both declarations. Reports go to stderr and failed inspection exits with
+a nonzero status. The core libraries continue to return typed errors.
+
+The source spans also support input names such as `<stdin>` when a terminal
+input wrapper is added. The current example reads a path, including `/dev/stdin`,
+until EOF.
 
 ## Tracing
 

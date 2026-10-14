@@ -2,8 +2,8 @@
 
 ## Objective
 
-Expose [0001](0001-netlist-and-circuit.md), [0002](0002-mna-assembly.md), and
-[0003](0003-linear-dc-analysis.md) through the `ferrispice` binary, completing
+Extend the `ferrispice` binary from [0001](0001-netlist-and-circuit.md) with
+[0002](0002-mna-assembly.md) and [0003](0003-linear-dc-analysis.md), completing
 [Deliverable 1](<../Deliverable 1.html>).
 
 ```text
@@ -19,9 +19,11 @@ to run during the one-on-one demonstration.
 
 ## Scope
 
-This plan covers arguments, file loading, `.dc` execution, stable result
-formatting, matrix inspection, diagnostics, example circuits, end-to-end
-checks, and submission documentation.
+Stack 0001 already implements netlist arguments, file loading, parsing, circuit
+validation, source-aware diagnostics, and summary output. This plan extends
+that pipeline with `.dc` execution, stable result formatting, matrix
+inspection, solve diagnostics, example circuits, end-to-end checks, and
+submission documentation.
 
 ## Binary Layout
 
@@ -31,11 +33,14 @@ bin/ferrispice/
 └── src/
     ├── main.rs
     ├── args.rs
+    ├── diagnostics.rs
+    ├── logger.rs
     └── output.rs
 ```
 
-`main` owns orchestration, `args` owns arguments, and `output` owns result and
-matrix formatting. Libraries do not read files, print, or exit the process.
+`main` owns orchestration, `args` owns arguments, `diagnostics` owns application
+error presentation, and `output` owns result and matrix formatting. Libraries
+do not read files, print, or exit the process.
 
 ## Command Contract
 
@@ -126,10 +131,9 @@ infer one from the demonstration week.
 
 | Subject | Deliverable |
 | --- | --- |
-| `[1/4][d1][cli] load netlist files and report input errors` | Arguments, files, parsing and validation diagnostics |
-| `[2/4][d1][cli] execute requested linear DC analysis` | Assembly, solving, `.dc` behavior, exit status |
-| `[3/4][d1][cli] display circuit results and MNA matrices` | Labels, units, orientation, matrix inspection |
-| `[4/4][d1][docs] document and exercise deliverable one` | Examples, usage, submission instructions, end-to-end checks |
+| `[1/3][d1][cli] execute requested linear DC analysis` | Extend the existing application pipeline with assembly, solving, `.dc` behavior, and solve diagnostics |
+| `[2/3][d1][cli] display circuit results and MNA matrices` | Labels, units, orientation, matrix inspection |
+| `[3/3][d1][docs] document and exercise deliverable one` | Examples, usage, submission instructions, end-to-end checks |
 
 Each diff builds and carries its relevant checks. The final diff validates
 the complete workflow rather than postponing all testing until then.

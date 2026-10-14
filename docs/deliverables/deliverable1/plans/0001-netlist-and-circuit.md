@@ -33,7 +33,8 @@ This plan covers:
 - All nine element types required by the handout.
 - Stable node and element IDs, ground, and reference resolution.
 - Semantic validation and structured errors.
-- Exact byte spans and source-highlighted diagnostics in the inspection example.
+- Exact byte spans and source-highlighted diagnostics in the application.
+- A runnable application path for loading, parsing, and validating netlists.
 - Parser and circuit-compilation tests.
 
 ## Workspace
@@ -197,29 +198,31 @@ Parser errors identify the line and expected record shape. Circuit errors
 identify the element and preserve its source location. Libraries return errors;
 the binary prints diagnostics and controls process exit.
 
-The inspection example attaches the input name and original text to typed
-parser/compiler errors and renders them with `miette`. Keep `miette` as a dev
-dependency for this example; the libraries return concrete `thiserror` errors
-without depending on terminal formatting. Duplicate-name errors retain the
-first declaration span as well as the offending declaration span. The example
-support module can later supply the application CLI diagnostics.
+The application attaches the input name and original text to typed
+parser/compiler errors and renders them with `miette`. The binary owns this
+dependency and the diagnostic adapter; the libraries return concrete
+`thiserror` errors without depending on terminal formatting. Duplicate-name
+errors retain the first declaration span as well as the offending declaration
+span. The circuit inspection example demonstrates direct library use with
+ordinary typed errors.
 
 ## Diff Stack
 
 | Subject | Deliverable |
 | --- | --- |
-| `[1/12][d1][workspace] establish crate boundaries` | Workspace and binary with tracing initialization |
-| `[2/12][d1][netlist] introduce netlist positions and byte spans` | Introduce netlist crate; NetlistPosition and ByteSpan |
-| `[3/12][d1][netlist] parse finite numbers with structured errors` | Typed parser errors, decimal/scientific values, non-finite rejection |
-| `[4/12][d1][netlist] tokenize records with positions and spans` | Token extraction, character columns, absolute byte spans, record ranges |
-| `[5/12][d1][netlist] scan netlist structure and directives` | Raw records, title, comments, physical line offsets, `.dc`, `.end`, framing errors |
-| `[6/12][d1][netlist] parse passive and independent elements` | R, C, L, V, I records and precise syntax-error spans |
-| `[7/12][d1][netlist] parse controlled-source records` | Confirmed VCVS, VCCS, CCVS, and CCCS grammar with span-preserving parsing |
-| `[8/12][d1][circuit] introduce typed circuit model` | Introduce circuit crate; typed elements, IDs, ground, circuit storage, and lookup API |
-| `[9/12][d1][circuit] resolve node and element references` | Deterministic name registration, terminal and forward-controller resolution, duplicate-name errors, and source spans |
-| `[10/12][d1][circuit] validate parameters and current controllers` | Finite and physical parameter validation, branch-current controller checks, and semantic-error spans |
-| `[11/12][d1][circuit] add circuit inspection example` | Runnable divider, end-to-end compilation test, public API example, and development documentation |
-| `[12/12][d1][diagnostics] render source-aware netlist errors` | Miette reports in inspect; input names, source snippets, labels, and help |
+| `[1/13][d1][workspace] establish crate boundaries` | Workspace and binary with tracing initialization |
+| `[2/13][d1][netlist] introduce netlist positions and byte spans` | Introduce netlist crate; NetlistPosition and ByteSpan |
+| `[3/13][d1][netlist] parse finite numbers with structured errors` | Typed parser errors, decimal/scientific values, non-finite rejection |
+| `[4/13][d1][netlist] tokenize records with positions and spans` | Token extraction, character columns, absolute byte spans, record ranges |
+| `[5/13][d1][netlist] scan netlist structure and directives` | Raw records, title, comments, physical line offsets, `.dc`, `.end`, framing errors |
+| `[6/13][d1][netlist] parse passive and independent elements` | R, C, L, V, I records and precise syntax-error spans |
+| `[7/13][d1][netlist] parse controlled-source records` | Confirmed VCVS, VCCS, CCVS, and CCCS grammar with span-preserving parsing |
+| `[8/13][d1][circuit] introduce typed circuit model` | Introduce circuit crate; typed elements, IDs, ground, circuit storage, and lookup API |
+| `[9/13][d1][circuit] resolve node and element references` | Deterministic name registration, terminal and forward-controller resolution, duplicate-name errors, and source spans |
+| `[10/13][d1][circuit] validate parameters and current controllers` | Finite and physical parameter validation, branch-current controller checks, and semantic-error spans |
+| `[11/13][d1][circuit] add circuit inspection example` | Runnable divider, end-to-end compilation test, public API example, and development documentation |
+| `[12/13][d1][diagnostics] render source-aware netlist errors` | Miette reports in inspect; input names, source snippets, labels, and help |
+| `[13/13][d1][cli] wire netlist inspection and diagnostics into binary` | File loading, parsing, circuit validation, summary output, tracing, and application-owned diagnostics |
 
 Every diff builds. Behavioral diffs include their relevant tests.
 
@@ -239,6 +242,11 @@ and EOF. Diagnostic tests render malformed values, missing `.end`, duplicate
 declarations, and unknown controllers with named source snippets. Verify both
 duplicate declarations are labeled and successful inspection still works.
 
+Invoke the application with valid input, malformed records, missing files,
+missing `.end`, duplicate names, and unknown controllers. Check stdout/stderr
+separation, exit status, help, argument counts, paths containing spaces, and
+successful validation without an analysis request.
+
 Run `cargo test --workspace --all-targets` after each behavioral diff and
 `cargo test --workspace --doc` for the public API examples.
 
@@ -252,8 +260,9 @@ The plan is complete when:
 - Netlists compile into circuits with stable, resolved identities.
 - Ground and current-control direction have explicit contracts.
 - Invalid input produces useful structured errors.
-- Inspection errors include input names, highlighted source text, and valid
+- Application errors include input names, highlighted source text, and valid
   byte ranges; duplicate-name reports show both declarations.
+- `cargo run -- <netlist>` loads, parses, validates, and summarizes a circuit.
 - 0002 can consume the circuit without reparsing text or resolving names.
 
 ## Open Questions

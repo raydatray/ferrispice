@@ -4,10 +4,15 @@ use ferrispice_netlist::{ParsedElement, ParsedKind, ParsedNetlist};
 
 use crate::model::name_key;
 use crate::{
-    Circuit, CircuitError, CircuitErrorKind, Element, ElementId, ElementKind, GROUND, Node, NodeId,
+    Circuit, CircuitError, Element, ElementError, ElementErrorKind, ElementId, ElementKind, GROUND,
+    Node, NodeId,
 };
 
-/// resolve names without allocating any matrix indices
+/// resolve names and validate parameters without allocating any matrix indices
+///
+/// A nonempty circuit must connect some element terminal to ground. Without one,
+/// every node voltage lacks a reference and no analysis can succeed. Floating
+/// subcircuits beside a grounded one are left to the solver.
 pub fn compile(parsed: &ParsedNetlist) -> Result<Circuit, CircuitError> {
     let _span = tracing::debug_span!("compile_circuit", elements = parsed.elements.len()).entered();
 
@@ -18,6 +23,7 @@ pub fn compile(parsed: &ParsedNetlist) -> Result<Circuit, CircuitError> {
         .enumerate()
         .map(|(index, element)| {
             let kind = resolve_kind(element, &registry)?;
+            validate_parameters(element, &kind)?;
 
             Ok(Element {
                 id: ElementId(index),
@@ -29,10 +35,37 @@ pub fn compile(parsed: &ParsedNetlist) -> Result<Circuit, CircuitError> {
                 span: element.span,
             })
         })
-        .collect::<Result<Vec<_>, CircuitError>>()?;
+        .collect::<Result<Vec<_>, ElementError>>()?;
 
     for element in &elements {
+        if let ElementKind::Ccvs { control, .. } | ElementKind::Cccs { control, .. } = element.kind
+        {
+            let controller = &elements[control.0];
+            // current controlled elements need to reference a branch current
+            if !controller.kind.has_branch_current() {
+                return Err(ElementError {
+                    location: element.location,
+                    span: element.span,
+                    element: element.name.clone(),
+                    kind: ElementErrorKind::UnsupportedController {
+                        name: controller.name.clone(),
+                        kind: controller.kind.name(),
+                    },
+                }
+                .into());
+            }
+        }
+
         tracing::trace!(element = element.name, id = ?element.id, "resolved element");
+    }
+
+    // one of the elements must reference a ground ndoe
+    if !elements.is_empty()
+        && !elements
+            .iter()
+            .any(|element| element.positive.is_ground() || element.negative.is_ground())
+    {
+        return Err(CircuitError::MissingGround);
     }
 
     tracing::debug!(
@@ -57,7 +90,7 @@ struct Registry {
 }
 
 impl Registry {
-    fn build(parsed: &ParsedNetlist) -> Result<Self, CircuitError> {
+    fn build(parsed: &ParsedNetlist) -> Result<Self, ElementError> {
         let mut registry = Self {
             nodes: vec![Node {
                 id: GROUND,
@@ -75,7 +108,7 @@ impl Registry {
             if let Some(previous) = registry.element_ids.get(&key) {
                 return Err(error(
                     element,
-                    CircuitErrorKind::DuplicateElement {
+                    ElementErrorKind::DuplicateElement {
                         first: parsed.elements[previous.0].location,
                         first_span: parsed.elements[previous.0].span,
                     },
@@ -106,7 +139,7 @@ impl Registry {
         Ok(registry)
     }
 
-    fn register_node(&mut self, element: &ParsedElement, name: &str) -> Result<(), CircuitError> {
+    fn register_node(&mut self, element: &ParsedElement, name: &str) -> Result<(), ElementError> {
         validate_name(element, "node", name)?;
 
         let key = name_key(name);
@@ -136,14 +169,14 @@ impl Registry {
         &self,
         element: &ParsedElement,
         name: &str,
-    ) -> Result<ElementId, CircuitError> {
+    ) -> Result<ElementId, ElementError> {
         self.element_ids
             .get(&name_key(name))
             .copied()
             .ok_or_else(|| {
                 error(
                     element,
-                    CircuitErrorKind::UnknownController {
+                    ElementErrorKind::UnknownController {
                         name: name.to_owned(),
                     },
                 )
@@ -151,7 +184,7 @@ impl Registry {
     }
 }
 
-fn resolve_kind(element: &ParsedElement, registry: &Registry) -> Result<ElementKind, CircuitError> {
+fn resolve_kind(element: &ParsedElement, registry: &Registry) -> Result<ElementKind, ElementError> {
     Ok(match &element.kind {
         ParsedKind::Resistor { resistance } => ElementKind::Resistor {
             resistance: *resistance,
@@ -196,15 +229,70 @@ fn resolve_kind(element: &ParsedElement, registry: &Registry) -> Result<ElementK
     })
 }
 
+fn validate_parameters(element: &ParsedElement, kind: &ElementKind) -> Result<(), ElementError> {
+    match *kind {
+        ElementKind::Resistor { resistance } => {
+            finite(element, "resistance", resistance)?;
+            if resistance == 0.0 {
+                return Err(error(element, ElementErrorKind::ZeroResistance));
+            }
+        }
+        ElementKind::Capacitor { capacitance } => nonnegative(element, "capacitance", capacitance)?,
+        ElementKind::Inductor { inductance } => nonnegative(element, "inductance", inductance)?,
+        ElementKind::VoltageSource { dc } | ElementKind::CurrentSource { dc } => {
+            finite(element, "DC value", dc)?
+        }
+        ElementKind::Vcvs { gain, .. } | ElementKind::Cccs { gain, .. } => {
+            finite(element, "gain", gain)?
+        }
+        ElementKind::Vccs {
+            transconductance, ..
+        } => finite(element, "transconductance", transconductance)?,
+        ElementKind::Ccvs {
+            transresistance, ..
+        } => finite(element, "transresistance", transresistance)?,
+    }
+    Ok(())
+}
+
+fn finite(
+    element: &ParsedElement,
+    parameter: &'static str,
+    value: f64,
+) -> Result<(), ElementError> {
+    if !value.is_finite() {
+        return Err(error(
+            element,
+            ElementErrorKind::NonFiniteParameter { parameter, value },
+        ));
+    }
+    Ok(())
+}
+
+fn nonnegative(
+    element: &ParsedElement,
+    parameter: &'static str,
+    value: f64,
+) -> Result<(), ElementError> {
+    finite(element, parameter, value)?;
+    if value < 0.0 {
+        return Err(error(
+            element,
+            ElementErrorKind::NegativeParameter { parameter, value },
+        ));
+    }
+    Ok(())
+}
+
 fn validate_name(
     element: &ParsedElement,
     field: &'static str,
     name: &str,
-) -> Result<(), CircuitError> {
+) -> Result<(), ElementError> {
     if name.is_empty() || name.chars().any(char::is_whitespace) {
         return Err(error(
             element,
-            CircuitErrorKind::InvalidName {
+            ElementErrorKind::InvalidName {
                 field,
                 name: name.to_owned(),
             },
@@ -214,8 +302,8 @@ fn validate_name(
     Ok(())
 }
 
-fn error(element: &ParsedElement, kind: CircuitErrorKind) -> CircuitError {
-    CircuitError {
+fn error(element: &ParsedElement, kind: ElementErrorKind) -> ElementError {
+    ElementError {
         location: element.location,
         span: element.span,
         element: element.name.clone(),

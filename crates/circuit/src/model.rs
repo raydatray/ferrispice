@@ -103,7 +103,7 @@ impl ElementKind {
     }
 }
 
-/// resolved circuit, IDs are scoped to this circuit, lookup is case-insensitive
+/// validated circuit, IDs are scoped to this circuit, lookup is case-insensitive
 #[derive(Clone)]
 pub struct Circuit {
     title: String,

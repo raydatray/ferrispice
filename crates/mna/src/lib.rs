@@ -41,6 +41,17 @@ pub fn assemble(circuit: &Circuit) -> Result<MnaSystem, AssemblyError> {
             ElementKind::VoltageSource { dc } => {
                 stamps::independent::voltage_source(&mut builder, element, dc)?
             }
+            ElementKind::Vcvs {
+                control_positive,
+                control_negative,
+                gain,
+            } => stamps::controlled::vcvs(
+                &mut builder,
+                element,
+                control_positive,
+                control_negative,
+                gain,
+            )?,
             _ => {
                 return Err(AssemblyError::new(
                     element,

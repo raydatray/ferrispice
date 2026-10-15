@@ -5,6 +5,7 @@ rusty spice
 
 The Rust 2024 workspace grows with each implementation stack. Stack 0001
 provides the `ferrispice-netlist` parser and `ferrispice-circuit` compiler.
+Stack 0002 adds dense MNA assembly in `ferrispice-mna`.
 The application binary initializes tracing; libraries emit events without
 installing a subscriber.
 
@@ -18,8 +19,8 @@ cargo run -- examples/voltage-divider.cir
 
 The application reads a netlist, parses and validates the circuit, and prints
 its title, node/element counts, and whether DC analysis was requested. Use
-`cargo run -- --help` for usage. MNA assembly and DC solving are implemented by
-the following stacks.
+`cargo run -- --help` for usage. DC solving and matrix display are implemented
+by the following stacks.
 
 For a detailed dump of resolved nodes and elements, run the library example:
 
@@ -39,6 +40,25 @@ and column indices. Nodes are ordered by first appearance, with ground first;
 elements remain in netlist order. Name lookup is ASCII case-insensitive and
 retains the original spelling for output. Positive current runs from the
 first terminal to the second.
+
+## MNA assembly
+
+```rust
+let system = ferrispice_mna::assemble(&circuit)?;
+```
+
+The assembled system is `G x + C dx/dt = b`, exposed as dense `nalgebra`
+matrices `system.g`, `system.c`, and vector `system.b`. The layout retains
+ordered labels and maps circuit IDs to matrix indices. Non-ground node
+voltages come first, followed by currents through voltage sources, inductors,
+VCVS, and CCVS in element order. Ground has no row or column.
+
+All nine element kinds are stamped additively, including forward current
+controls. Capacitors contribute only to `C`; inductors retain a zero-voltage
+constraint at DC. Assembly accepts singular topologies; the solver handles
+their diagnosis in stack 0003.
+
+Run the MNA equation checks with `cargo test -p ferrispice-mna`.
 
 ## Netlist syntax
 

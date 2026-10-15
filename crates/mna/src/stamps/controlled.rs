@@ -56,3 +56,19 @@ pub(crate) fn ccvs(
 
     Ok(())
 }
+
+pub(crate) fn cccs(
+    builder: &mut MatrixBuilder,
+    element: &Element,
+    control: ElementId,
+    gain: f64,
+) -> Result<(), AssemblyError> {
+    let positive = builder.node_index(element.positive);
+    let negative = builder.node_index(element.negative);
+    let controller = builder.branch_index(element, control)?;
+
+    builder.add_g(positive, Some(controller), gain);
+    builder.add_g(negative, Some(controller), -gain);
+
+    Ok(())
+}

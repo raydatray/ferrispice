@@ -24,9 +24,6 @@ impl AssemblyError {
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum AssemblyErrorKind {
-    #[error("{kind} stamping is not implemented")]
-    UnsupportedElement { kind: &'static str },
-
     #[error("element {branch:?} has no allocated branch-current unknown")]
     MissingBranchCurrent { branch: ElementId },
 }

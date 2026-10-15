@@ -1,8 +1,9 @@
 mod builder;
 mod error;
 mod layout;
+mod stamps;
 
-use ferrispice_circuit::Circuit;
+use ferrispice_circuit::{Circuit, ElementKind};
 use nalgebra::{DMatrix, DVector};
 
 pub use builder::MatrixBuilder;
@@ -21,15 +22,23 @@ pub struct MnaSystem {
 pub fn assemble(circuit: &Circuit) -> Result<MnaSystem, AssemblyError> {
     let _span = tracing::debug_span!("assemble_mna", elements = circuit.elements().len()).entered();
 
-    let builder = MatrixBuilder::new(UnknownLayout::new(circuit));
+    let mut builder = MatrixBuilder::new(UnknownLayout::new(circuit));
 
-    if let Some(element) = circuit.elements().first() {
-        return Err(AssemblyError::new(
-            element,
-            AssemblyErrorKind::UnsupportedElement {
-                kind: element.kind.name(),
-            },
-        ));
+    for element in circuit.elements() {
+        match element.kind {
+            ElementKind::Resistor { resistance } => {
+                stamps::passive::resistor(&mut builder, element, resistance)
+            }
+            _ => {
+                return Err(AssemblyError::new(
+                    element,
+                    AssemblyErrorKind::UnsupportedElement {
+                        kind: element.kind.name(),
+                    },
+                ));
+            }
+        }
+        tracing::trace!(element = element.name, "stamped element");
     }
 
     let system = builder.finish();

@@ -13,12 +13,19 @@ cargo test --workspace --all-targets
 cargo test --workspace --doc
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p ferrispice-circuit --example inspect -- examples/voltage-divider.cir
+cargo run -- examples/voltage-divider.cir
 ```
 
-The inspection example runs file input through parsing and circuit validation,
-showing resolved node/element IDs and the `.dc` request. MNA assembly and DC
-solving are implemented by the following stacks.
+The application reads a netlist, parses and validates the circuit, and prints
+its title, node/element counts, and whether DC analysis was requested. Use
+`cargo run -- --help` for usage. MNA assembly and DC solving are implemented by
+the following stacks.
+
+For a detailed dump of resolved nodes and elements, run the library example:
+
+```sh
+cargo run -p ferrispice-circuit --example inspect -- examples/voltage-divider.cir
+```
 
 Use the libraries directly:
 
@@ -64,23 +71,24 @@ references are supported.
 
 ## Diagnostics
 
-The inspection example uses `miette` to render parser and compiler errors with
+The application uses `miette` to render parser and compiler errors with
 the input name, source snippets, and highlighted ranges. Duplicate-name reports
-show both declarations. Reports go to stderr and failed inspection exits with
-a nonzero status. The core libraries continue to return typed errors.
+show both declarations. Errors are logged at `ERROR` level, followed by a
+separate colored source report on stderr. Failed validation exits with a
+nonzero status. The core libraries continue to return typed errors.
 
-The source spans also support input names such as `<stdin>` when a terminal
-input wrapper is added. The current example reads a path, including `/dev/stdin`,
-until EOF.
+The application reads a path, including `/dev/stdin`, until EOF. The library
+inspection example returns ordinary typed errors; source-highlighted reports
+are rendered by the application.
 
 ## Tracing
 
 The application uses `RUST_LOG`, defaulting to `info`, and writes logs to stderr:
 
 ```sh
-RUST_LOG=debug cargo run
+RUST_LOG=trace cargo run -- examples/voltage-divider.cir
 ```
 
 Parser and compiler events use the `ferrispice_netlist` and
-`ferrispice_circuit` targets. A caller can install a `tracing-subscriber` to
-enable those events; the inspection example prints the circuit directly.
+`ferrispice_circuit` targets. The application initializes their subscriber;
+library callers can install their own `tracing-subscriber`.

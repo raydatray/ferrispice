@@ -9,8 +9,5 @@ ferrispice-netlist = { path = "../netlist" }
 thiserror.workspace = true
 tracing.workspace = true
 
-[dev-dependencies]
-miette = { version = "7", features = ["fancy"] }
-
 [lints]
 workspace = true

@@ -5,7 +5,7 @@ use thiserror::Error;
 
 /// preserve the library error, attach source text only at presentation time
 #[derive(Debug, Error)]
-pub enum NetlistCause {
+pub(crate) enum NetlistCause {
     #[error(transparent)]
     Parse(#[from] ParseError),
 
@@ -15,7 +15,6 @@ pub enum NetlistCause {
 
 #[derive(Debug, Error, Diagnostic)]
 #[error("{message}")]
-#[diagnostic(code(ferrispice::netlist))]
 struct NetlistDiagnostic {
     cause: NetlistCause,
     /// errors without a source span name the input instead
@@ -85,7 +84,7 @@ impl NetlistDiagnostic {
     }
 }
 
-pub fn report(
+pub(crate) fn report(
     error: impl Into<NetlistCause>,
     input_name: String,
     contents: String,
@@ -137,7 +136,7 @@ mod tests {
         let output = render(&diagnostic);
         assert!(output.contains("<stdin>"));
         assert!(output.contains("R1 a 0 100"));
-        assert!(output.contains("Finish the netlist with .end."));
+        assert!(output.contains("finish the netlist with `.end`"));
     }
 
     #[test]
@@ -183,7 +182,7 @@ mod tests {
         assert_eq!(diagnostic.labels().into_iter().flatten().count(), 0);
         let output = render(&diagnostic);
         assert!(output.contains("ungrounded.cir: no element terminal connects to ground node 0"));
-        assert!(output.contains("Connect at least one element terminal to node 0"));
+        assert!(output.contains("connect at least one element terminal to node 0"));
         assert!(!output.contains("R1 a b 100"));
     }
 

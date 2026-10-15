@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+clap.workspace = true
+ferrispice-netlist = { path = "../../crates/netlist" }
+ferrispice-circuit = { path = "../../crates/circuit" }
+miette.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

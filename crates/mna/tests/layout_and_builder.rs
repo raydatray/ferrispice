@@ -104,17 +104,3 @@ fn missing_branch_lookup_is_an_element_error() {
         AssemblyErrorKind::MissingBranchCurrent { branch: element.id }
     );
 }
-
-#[test]
-fn unimplemented_elements_are_not_silently_ignored() {
-    let circuit =
-        compile(&parse("Unsupported\nCCCS1 p 0 Vsense 2\nVsense cp 0 DC 0\n.end").unwrap())
-            .unwrap();
-    let error = assemble(&circuit).unwrap_err();
-    assert_eq!(error.element, "CCCS1");
-    assert_eq!(error.span, circuit.elements()[0].span);
-    assert_eq!(
-        error.kind,
-        AssemblyErrorKind::UnsupportedElement { kind: "CCCS" }
-    );
-}

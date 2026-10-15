@@ -107,12 +107,12 @@ fn missing_branch_lookup_is_an_element_error() {
 
 #[test]
 fn unimplemented_elements_are_not_silently_ignored() {
-    let circuit = compile(&parse("Unsupported\nL1 p 0 1\n.end").unwrap()).unwrap();
+    let circuit = compile(&parse("Unsupported\nVCVS1 p 0 cp 0 2\n.end").unwrap()).unwrap();
     let error = assemble(&circuit).unwrap_err();
-    assert_eq!(error.element, "L1");
+    assert_eq!(error.element, "VCVS1");
     assert_eq!(error.span, circuit.elements()[0].span);
     assert_eq!(
         error.kind,
-        AssemblyErrorKind::UnsupportedElement { kind: "inductor" }
+        AssemblyErrorKind::UnsupportedElement { kind: "VCVS" }
     );
 }

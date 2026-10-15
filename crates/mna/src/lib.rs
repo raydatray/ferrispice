@@ -63,6 +63,10 @@ pub fn assemble(circuit: &Circuit) -> Result<MnaSystem, AssemblyError> {
                 control_negative,
                 transconductance,
             ),
+            ElementKind::Ccvs {
+                control,
+                transresistance,
+            } => stamps::controlled::ccvs(&mut builder, element, control, transresistance)?,
             _ => {
                 return Err(AssemblyError::new(
                     element,

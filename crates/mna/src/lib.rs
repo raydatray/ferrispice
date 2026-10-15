@@ -29,6 +29,9 @@ pub fn assemble(circuit: &Circuit) -> Result<MnaSystem, AssemblyError> {
             ElementKind::Resistor { resistance } => {
                 stamps::passive::resistor(&mut builder, element, resistance)
             }
+            ElementKind::Capacitor { capacitance } => {
+                stamps::passive::capacitor(&mut builder, element, capacitance)
+            }
             ElementKind::CurrentSource { dc } => {
                 stamps::independent::current_source(&mut builder, element, dc)
             }

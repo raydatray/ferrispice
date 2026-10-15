@@ -21,3 +21,21 @@ pub(crate) fn vcvs(
 
     Ok(())
 }
+
+pub(crate) fn vccs(
+    builder: &mut MatrixBuilder,
+    element: &Element,
+    control_positive: NodeId,
+    control_negative: NodeId,
+    transconductance: f64,
+) {
+    let positive = builder.node_index(element.positive);
+    let negative = builder.node_index(element.negative);
+    let cp = builder.node_index(control_positive);
+    let cn = builder.node_index(control_negative);
+
+    builder.add_g(positive, cp, transconductance);
+    builder.add_g(positive, cn, -transconductance);
+    builder.add_g(negative, cp, -transconductance);
+    builder.add_g(negative, cn, transconductance);
+}

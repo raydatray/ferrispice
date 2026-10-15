@@ -52,6 +52,17 @@ pub fn assemble(circuit: &Circuit) -> Result<MnaSystem, AssemblyError> {
                 control_negative,
                 gain,
             )?,
+            ElementKind::Vccs {
+                control_positive,
+                control_negative,
+                transconductance,
+            } => stamps::controlled::vccs(
+                &mut builder,
+                element,
+                control_positive,
+                control_negative,
+                transconductance,
+            ),
             _ => {
                 return Err(AssemblyError::new(
                     element,

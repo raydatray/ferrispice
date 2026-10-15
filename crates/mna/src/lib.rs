@@ -32,6 +32,9 @@ pub fn assemble(circuit: &Circuit) -> Result<MnaSystem, AssemblyError> {
             ElementKind::CurrentSource { dc } => {
                 stamps::independent::current_source(&mut builder, element, dc)
             }
+            ElementKind::VoltageSource { dc } => {
+                stamps::independent::voltage_source(&mut builder, element, dc)?
+            }
             _ => {
                 return Err(AssemblyError::new(
                     element,

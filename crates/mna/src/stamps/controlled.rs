@@ -1,4 +1,4 @@
-use ferrispice_circuit::{Element, NodeId};
+use ferrispice_circuit::{Element, ElementId, NodeId};
 
 use crate::{AssemblyError, MatrixBuilder};
 
@@ -38,4 +38,21 @@ pub(crate) fn vccs(
     builder.add_g(positive, cn, -transconductance);
     builder.add_g(negative, cp, -transconductance);
     builder.add_g(negative, cn, transconductance);
+}
+
+pub(crate) fn ccvs(
+    builder: &mut MatrixBuilder,
+    element: &Element,
+    control: ElementId,
+    transresistance: f64,
+) -> Result<(), AssemblyError> {
+    let positive = builder.node_index(element.positive);
+    let negative = builder.node_index(element.negative);
+    let branch = builder.branch_index(element, element.id)?;
+    let controller = builder.branch_index(element, control)?;
+
+    builder.add_branch_connections(positive, negative, branch);
+    builder.add_g(Some(branch), Some(controller), -transresistance);
+
+    Ok(())
 }

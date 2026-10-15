@@ -1,0 +1,15 @@
+[package]
+name = "ferrispice-mna"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ferrispice-circuit = { path = "../circuit" }
+ferrispice-netlist = { path = "../netlist" }
+nalgebra.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

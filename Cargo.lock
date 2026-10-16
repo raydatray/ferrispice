@@ -242,6 +242,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrispice-solver"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "gimli"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

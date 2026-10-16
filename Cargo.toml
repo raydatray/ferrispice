@@ -1,5 +1,5 @@
 [workspace]
-members = ["bin/ferrispice", "crates/netlist", "crates/circuit", "crates/mna"]
+members = ["bin/ferrispice", "crates/netlist", "crates/circuit", "crates/mna", "crates/solver"]
 default-members = ["bin/ferrispice"]
 resolver = "3"
 

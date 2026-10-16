@@ -20,10 +20,8 @@ fn main() {
 }
 
 fn run(args: args::Args) -> miette::Result<()> {
-    let path = args.path;
-
-    let input_name = path.display().to_string();
-    let text = std::fs::read_to_string(&path)
+    let input_name = args.path.display().to_string();
+    let text = std::fs::read_to_string(&args.path)
         .into_diagnostic()
         .wrap_err_with(|| format!("could not read netlist {input_name:?}"))?;
 
@@ -38,13 +36,22 @@ fn run(args: args::Args) -> miette::Result<()> {
     };
 
     // repeated `.dc` records request the same single analysis
-    if !parsed.requests_dc() {
+    let requests_dc = parsed.requests_dc();
+    if args.dump_mna || !requests_dc {
         let system = match ferrispice_mna::assemble(&circuit) {
             Ok(system) => system,
             Err(error) => return Err(diagnostics::report(error, input_name, text)),
         };
-        output::print_validation(&circuit, &system);
-        return Ok(());
+
+        // matrices come before solving so they remain visible if the solve fails
+        if args.dump_mna {
+            output::print_mna(&circuit, &system);
+        }
+
+        if !requests_dc {
+            output::print_validation(&circuit, &system);
+            return Ok(());
+        }
     }
 
     let solution = match ferrispice_solver::solve_dc(&circuit) {

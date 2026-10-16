@@ -210,6 +210,7 @@ dependencies = [
  "ferrispice-netlist",
  "ferrispice-solver",
  "miette",
+ "nalgebra",
  "thiserror",
  "tracing",
  "tracing-subscriber",

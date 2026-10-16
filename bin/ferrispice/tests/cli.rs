@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -50,28 +51,100 @@ fn assert_usage(output: &[u8]) {
     );
 }
 
-#[test]
-fn validates_the_divider_from_a_path_containing_spaces() {
-    let input = Input::new(include_str!("../../../examples/voltage-divider.cir"));
+fn success(text: &str) -> String {
+    let input = Input::new(text);
     let output = run(&[input.path.as_os_str()]);
-    assert!(output.status.success(), "{:?}", output);
-    assert!(output.stderr.is_empty());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Name of circuit"));
-    assert!(stdout.contains("2 non-ground nodes, 3 elements"));
-    assert!(stdout.contains("DC requested: true"));
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// Parse `NAME(...) = value` result lines, ignoring units and alignment.
+fn results(stdout: &str) -> HashMap<String, f64> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (label, value) = line.split_once('=')?;
+            let value = value.split_whitespace().next()?.parse().ok()?;
+            Some((label.trim().to_owned(), value))
+        })
+        .collect()
+}
+
+fn assert_results(stdout: &str, expected: &[(&str, f64)]) {
+    let results = results(stdout);
+    for &(label, value) in expected {
+        let actual = results[label];
+        assert!(
+            (actual - value).abs() <= 1e-9 * (1.0 + value.abs()),
+            "{label}: expected {value}, got {actual}\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn solves_the_divider_from_a_path_containing_spaces() {
+    let stdout = success(include_str!("../../../examples/voltage-divider.cir"));
+    assert!(stdout.contains("linear DC analysis"), "{stdout}");
+    let labels: Vec<_> = stdout
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(label, _)| label.trim())
+        .collect();
+    assert_eq!(labels, ["V(n1)", "V(n2)", "I(Vin)"], "{stdout}");
+    assert_results(
+        &stdout,
+        &[("V(n1)", 6.0), ("V(n2)", 2.0), ("I(Vin)", -0.04)],
+    );
+}
+
+#[test]
+fn dc_may_appear_anywhere_before_end_and_repeats_run_once() {
+    for text in [
+        "Divider\n.dc\nVin n1 0 DC 6\nR1 n1 n2 100\nR2 n2 0 50\n.end\n",
+        "Divider\nVin n1 0 DC 6\n.dc\nR1 n1 n2 100\nR2 n2 0 50\n.end\n",
+        "Divider\nVin n1 0 DC 6\n.DC\nR1 n1 n2 100\n.dc\nR2 n2 0 50\n.dc\n.end\n",
+    ] {
+        let stdout = success(text);
+        assert_eq!(stdout.matches("linear DC analysis").count(), 1, "{stdout}");
+        assert_eq!(stdout.matches("V(n2)").count(), 1, "{stdout}");
+        assert_results(&stdout, &[("V(n2)", 2.0), ("I(Vin)", -0.04)]);
+    }
 }
 
 #[test]
 fn validates_a_circuit_without_an_analysis_request() {
-    let input = Input::new("No analysis\nR1 a 0 100\n.end\n");
-    let output = run(&[input.path.as_os_str()]);
-    assert!(output.status.success(), "{:?}", output);
+    let stdout = success("No analysis\nR1 a 0 100\n.end\n");
+    assert!(stdout.contains("no analysis requested"), "{stdout}");
     assert!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .contains("DC requested: false")
+        !stdout.lines().any(|line| line == "linear DC analysis"),
+        "{stdout}"
     );
+    assert!(results(&stdout).is_empty(), "{stdout}");
+}
+
+#[test]
+fn singular_circuits_fail_without_partial_results() {
+    for text in [
+        "Floating\nR1 a b 10\nR2 c 0 1\n.dc\n.end\n",
+        "Conflict\nV1 p 0 DC 1\nV2 p 0 DC 2\n.dc\n.end\n",
+    ] {
+        let input = Input::new(text);
+        let output = run(&[input.path.as_os_str()]);
+        assert!(!output.status.success(), "{text:?}");
+        assert!(output.stdout.is_empty(), "{text:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("ERROR"), "{stderr}");
+        assert!(stderr.contains("input with spaces.cir"), "{stderr}");
+        assert!(stderr.contains("linear DC analysis failed"), "{stderr}");
+        assert!(stderr.contains("singular"), "{stderr}");
+    }
+}
+
+#[test]
+fn singular_circuits_still_validate_without_dc() {
+    let stdout = success("Floating\nR1 a b 10\nR2 c 0 1\n.end\n");
+    assert!(stdout.contains("no analysis requested"), "{stdout}");
 }
 
 #[test]

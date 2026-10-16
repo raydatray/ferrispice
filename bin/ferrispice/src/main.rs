@@ -1,6 +1,7 @@
 mod args;
 mod diagnostics;
 mod logger;
+mod output;
 
 use clap::Parser;
 use miette::{IntoDiagnostic, WrapErr};
@@ -36,13 +37,22 @@ fn run(args: args::Args) -> miette::Result<()> {
         Err(error) => return Err(diagnostics::report(error, input_name, text)),
     };
 
-    println!("{}", circuit.title());
-    println!(
-        "validated circuit: {} non-ground nodes, {} elements",
-        circuit.non_ground_nodes().count(),
-        circuit.elements().len(),
-    );
-    println!("DC requested: {}", parsed.requests_dc());
+    // repeated `.dc` records request the same single analysis
+    if !parsed.requests_dc() {
+        let system = match ferrispice_mna::assemble(&circuit) {
+            Ok(system) => system,
+            Err(error) => return Err(diagnostics::report(error, input_name, text)),
+        };
+        output::print_validation(&circuit, &system);
+        return Ok(());
+    }
+
+    let solution = match ferrispice_solver::solve_dc(&circuit) {
+        Ok(solution) => solution,
+        Err(error) => return Err(diagnostics::analysis(error, input_name, text)),
+    };
+
+    output::print_solution(&circuit, &solution);
 
     Ok(())
 }

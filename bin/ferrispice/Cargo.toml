@@ -8,6 +8,8 @@ rust-version.workspace = true
 clap.workspace = true
 ferrispice-netlist = { path = "../../crates/netlist" }
 ferrispice-circuit = { path = "../../crates/circuit" }
+ferrispice-mna = { path = "../../crates/mna" }
+ferrispice-solver = { path = "../../crates/solver" }
 miette.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

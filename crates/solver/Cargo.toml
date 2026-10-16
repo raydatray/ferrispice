@@ -5,9 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ferrispice-circuit = { path = "../circuit" }
+ferrispice-mna = { path = "../mna" }
 nalgebra.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+ferrispice-netlist = { path = "../netlist" }
 
 [lints]
 workspace = true

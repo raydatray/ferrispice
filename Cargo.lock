@@ -245,6 +245,9 @@ dependencies = [
 name = "ferrispice-solver"
 version = "0.1.0"
 dependencies = [
+ "ferrispice-circuit",
+ "ferrispice-mna",
+ "ferrispice-netlist",
  "nalgebra",
  "thiserror",
  "tracing",

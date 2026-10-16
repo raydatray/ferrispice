@@ -206,7 +206,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "ferrispice-circuit",
+ "ferrispice-mna",
  "ferrispice-netlist",
+ "ferrispice-solver",
  "miette",
  "thiserror",
  "tracing",

@@ -60,6 +60,27 @@ their diagnosis in stack 0003.
 
 Run the MNA equation checks with `cargo test -p ferrispice-mna`.
 
+## Linear DC analysis
+
+```rust
+let solution = ferrispice_solver::solve_dc(&circuit)?;
+let v = solution.node_voltage(circuit.find_node("n2").unwrap());
+let i = solution.element_current(circuit.find_element("R1").unwrap());
+```
+
+`ferrispice-solver` sets time derivatives to zero and solves `G x = b` with
+partially pivoted LU. Inputs must be finite. A pivot no larger than
+`n * EPSILON * max|G|` is reported as singular rather than perturbed. Each
+equation's residual must satisfy `|r_i| <= 1e-12 + 1e-9 * (sum_j |G_ij x_j| + |b_i|)`.
+
+Results are queried by circuit ID. Ground is exactly zero. Every element has a
+current oriented from its first terminal to its second: resistors use
+`(v[p] - v[n]) / R`, capacitors are open (zero), current sources report their
+signed value, VCCS and CCCS currents are derived from their controls, and
+voltage sources, inductors, VCVS, and CCVS report solved branch currents.
+`solve_dc` assembles the system internally, keeping the circuit and its matrix
+layout paired.
+
 ## Netlist syntax
 
 The first line is the circuit title. `.end` terminates the input, and `.dc`

@@ -9,6 +9,7 @@ edition = "2024"
 rust-version = "1.98.1"
 
 [workspace.dependencies]
+boxen = "0.4"
 clap = { version = "4", features = ["derive"] }
 miette = { version = "7", features = ["fancy"] }
 nalgebra = "0.35"

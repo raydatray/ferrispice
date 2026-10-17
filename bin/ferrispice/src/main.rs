@@ -45,11 +45,11 @@ fn run(args: args::Args) -> miette::Result<()> {
 
         // matrices come before solving so they remain visible if the solve fails
         if args.dump_mna {
-            output::print_mna(&circuit, &system);
+            output::print_mna(&circuit, &system)?;
         }
 
         if args.dump_lu {
-            output::print_lu(&circuit, &system);
+            output::print_lu(&circuit, &system)?;
         }
 
         if !requests_dc {
@@ -63,7 +63,7 @@ fn run(args: args::Args) -> miette::Result<()> {
         Err(error) => return Err(diagnostics::analysis(error, input_name, text)),
     };
 
-    output::print_solution(&circuit, &solution);
+    output::print_solution(&circuit, &solution)?;
 
     Ok(())
 }

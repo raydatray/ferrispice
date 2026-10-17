@@ -53,12 +53,25 @@ fn assert_usage(output: &[u8]) {
     );
 }
 
+fn output_text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            line.trim_matches(|c: char| {
+                c.is_whitespace() || matches!(c, '│' | '╭' | '╮' | '╰' | '╯' | '─')
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn success(text: &str) -> String {
     let input = Input::new(text);
     let output = run(&[input.path.as_os_str()]);
     assert!(output.status.success(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
-    String::from_utf8(output.stdout).unwrap()
+    output_text(output.stdout)
 }
 
 /// Parse `NAME(...) = value` result lines, ignoring units and alignment.
@@ -192,7 +205,7 @@ fn dump_mna(text: &str) -> Output {
 fn dumped_matrices_have_stable_labels_and_values() {
     let output = dump_mna(DIVIDER);
     assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = output_text(output.stdout);
     let positions: Vec<_> = ["[0] V(n1)", "[1] V(n2)", "[2] I(Vin)"]
         .iter()
         .map(|label| {
@@ -229,7 +242,7 @@ fn dumped_storage_terms_and_branch_rows_are_labeled() {
     let output =
         dump_mna("Storage\nI1 0 a DC 1\nR1 a 0 1\nC1 a 0 2e-6\nL1 a b 3e-3\nR2 b 0 1\n.end\n");
     assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = output_text(output.stdout);
     let c = matrix(&stdout, "C", 3);
     assert_eq!(c[0], ("KCL a".to_owned(), vec![2e-6, 0.0, 0.0]));
     assert_eq!(c[2], ("branch L1".to_owned(), vec![0.0, 0.0, -3e-3]));
@@ -240,7 +253,7 @@ fn dumped_storage_terms_and_branch_rows_are_labeled() {
 fn matrices_remain_visible_when_the_solve_fails() {
     let output = dump_mna("Floating\nR1 a b 10\nR2 c 0 1\n.dc\n.end\n");
     assert!(!output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = output_text(output.stdout);
     assert_eq!(
         matrix(&stdout, "G", 3),
         [
@@ -281,7 +294,7 @@ fn dumped_lu_factors_reconstruct_the_pivoted_mna_system() {
         OsStr::new("--dump-lu"),
     ]);
     assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = output_text(output.stdout);
     let g = dense_matrix(&stdout, "G", 3);
     let p = dense_matrix(&stdout, "P", 3);
     let l = dense_matrix(&stdout, "L", 3);
@@ -319,7 +332,7 @@ fn lu_dump_preserves_the_solution_without_requesting_mna_output() {
     let output = dump_lu(DIVIDER);
     assert!(output.status.success(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = output_text(output.stdout);
 
     assert_eq!(results(&stdout), results(&normal));
     for name in ["P:", "L:", "U:"] {
@@ -332,7 +345,7 @@ fn lu_dump_preserves_the_solution_without_requesting_mna_output() {
 fn lu_factors_remain_visible_when_the_solve_fails() {
     let output = dump_lu("Floating\nR1 a b 10\nR2 c 0 1\n.dc\n.end\n");
     assert!(!output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = output_text(output.stdout);
     for name in ["P", "L", "U"] {
         assert_eq!(matrix(&stdout, name, 3).len(), 3, "{stdout}");
     }
@@ -352,7 +365,7 @@ fn lu_factors_remain_visible_when_the_solve_fails() {
 fn lu_dump_does_not_request_dc_analysis() {
     let output = dump_lu("No analysis\nV1 a 0 DC 2\nR1 a 0 1\n.end\n");
     assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = output_text(output.stdout);
     assert!(stdout.contains("no analysis requested"), "{stdout}");
     assert!(results(&stdout).is_empty(), "{stdout}");
     for name in ["P", "L", "U"] {
@@ -364,7 +377,7 @@ fn lu_dump_does_not_request_dc_analysis() {
 fn lu_dump_handles_an_empty_system() {
     let output = dump_lu("Empty\n.dc\n.end\n");
     assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stdout = output_text(output.stdout);
     assert_eq!(stdout.matches("(empty)").count(), 3, "{stdout}");
     assert!(results(&stdout).is_empty(), "{stdout}");
     assert!(

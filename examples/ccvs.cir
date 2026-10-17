@@ -1,0 +1,9 @@
+CCVS transresistance
+* The zero-volt source Vsense measures 5 mA, so V(out) = 500 Ohm * 5 mA = 2.5 V.
+Vin in 0 DC 5
+R1 in sense 1000
+Vsense sense 0 DC 0
+CCVS1 out 0 Vsense 500
+Rload out 0 1000
+.dc
+.end

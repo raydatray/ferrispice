@@ -11,7 +11,7 @@ netlist file
 -> parse and compile
 -> assemble matrices
 -> run requested DC analysis
--> print named voltages and currents
+-> print the labelled entries of the MNA unknown vector x
 ```
 
 The complete workflow should be reproducible from submitted source and easy
@@ -21,9 +21,9 @@ to run during the one-on-one demonstration.
 
 Stack 0001 already implements netlist arguments, file loading, parsing, circuit
 validation, source-aware diagnostics, and summary output. This plan extends
-that pipeline with `.dc` execution, stable result formatting, matrix
-inspection, solve diagnostics, example circuits, end-to-end checks, and
-submission documentation.
+that pipeline with `.dc` execution, stable result formatting, framed output,
+MNA and LU inspection, solve diagnostics, example circuits, end-to-end checks,
+and submission documentation.
 
 ## Binary Layout
 
@@ -48,12 +48,14 @@ From the workspace root:
 
 ```sh
 cargo run -- examples/voltage-divider.cir
-cargo run -- examples/voltage-divider.cir --dump-matrices
+cargo run -- examples/voltage-divider.cir --dump-mna
+cargo run -- examples/voltage-divider.cir --dump-lu
+cargo run -- examples/voltage-divider.cir --dump-mna --dump-lu
 ```
 
-Accept one netlist path and optional `--dump-matrices`. Help explains the
-invocation and that `.dc` in the netlist requests the linear DC analysis
-defined by Deliverable 1.
+Accept one netlist path and independent `--dump-mna` and `--dump-lu` flags.
+Help explains the invocation and that `.dc` in the netlist requests the linear
+DC analysis defined by Deliverable 1.
 
 Load, parse, compile, and assemble. Run DC analysis when `.dc` is present.
 Repeated `.dc` records request one analysis rather than duplicate output.
@@ -73,34 +75,46 @@ R2 n2 0 50
 
 ## Result Output
 
-Print the title and analysis type, followed by stable circuit-order results
-with voltage/current labels and units:
+Print a titled `linear DC analysis` panel containing the circuit title and
+exactly the entries of `x` in MNA layout order, with voltage/current labels
+and units:
 
 ```text
-Voltage divider
-Linear DC analysis
-
-V(0)   = 0 V
-V(n1)  = 6 V
-V(n2)  = 2 V
-
-I(Vin) = -0.04 A
-I(R1)  = 0.04 A
-I(R2)  = 0.04 A
+╭ linear DC analysis ────╮
+│                        │
+│  Voltage divider       │
+│                        │
+│  V(n1)  = 6 V          │
+│  V(n2)  = 2 V          │
+│  I(Vin) = -0.04 A      │
+│                        │
+╰────────────────────────╯
 ```
 
 Positive current flows from the first terminal to the second. Document this
 so negative current through a delivering voltage source is understandable.
 Use sufficient significant digits and scientific notation where appropriate.
 
+Use Boxen for rounded, titled MNA, LU, and result panels. Keep matrix text
+aligned inside each panel. Sections wider than the terminal use plain output
+so the numeric columns are preserved.
+
 ## Matrix Inspection
 
-`--dump-matrices` prints `G`, `C`, `b`, and ordered unknown labels.
+`--dump-mna` prints `G`, `C`, `b`, and ordered unknown labels.
 Distinguish node/KCL rows from branch-constraint rows. Formatting belongs to
 the binary; the MNA crate exposes data and layout.
 
 Print matrices before solving so they remain available when a singular
 system causes analysis to fail.
+
+`--dump-lu` prints `P`, `L`, and `U` with `P * G = L * U`. `P` maps original
+MNA row positions to factor positions. Rows of `L` and `U` show both positions
+as `[factor position <- original MNA row]`, with the original equation label.
+These identify provenance through row swaps; elimination changes the equations.
+Columns of `L` are pivot steps, and columns of `U` retain the unknown labels.
+The binary computes this diagnostic factorization separately from the solver.
+Both flags work without `.dc` and can be combined without changing solution entries.
 
 ## Errors and Exit Behavior
 
@@ -131,9 +145,11 @@ infer one from the demonstration week.
 
 | Subject | Deliverable |
 | --- | --- |
-| `[1/3][d1][cli] execute requested linear DC analysis` | Extend the existing application pipeline with assembly, solving, `.dc` behavior, and solve diagnostics |
-| `[2/3][d1][cli] display circuit results and MNA matrices` | Labels, units, orientation, matrix inspection |
-| `[3/3][d1][docs] document and exercise deliverable one` | Examples, usage, submission instructions, end-to-end checks |
+| `[1/5][d1][cli] execute requested linear DC analysis` | Extend the existing application pipeline with assembly, solving, `.dc` behavior, and solve diagnostics |
+| `[2/5][d1][cli] display circuit results and MNA matrices` | Labels, units, orientation, `--dump-mna` inspection |
+| `[3/5][d1][cli] dump LU factors and row permutations` | `--dump-lu`, permutation/factor inspection, and unchanged solution output |
+| `[4/5][d1][cli] frame terminal output with Boxen` | Rounded, titled output panels, aligned content, and plain output for wide sections |
+| `[5/5][d1][docs] document and exercise deliverable one` | Examples, usage, submission instructions, end-to-end checks |
 
 Each diff builds and carries its relevant checks. The final diff validates
 the complete workflow rather than postponing all testing until then.
@@ -146,7 +162,12 @@ Invoke the binary against fixture files and verify:
 - `.dc` at different positions before `.end`.
 - Repeated `.dc` records do not duplicate output.
 - No solved-result section when `.dc` is absent.
-- Matrix values and stable unknown ordering with `--dump-matrices`.
+- Matrix values and stable unknown ordering with `--dump-mna`.
+- Printed LU factors reconstruct the pivoted MNA matrix within display precision.
+- Factor-row labels track original equations through multiple row swaps, and
+  columns of `L` are labeled as pivot steps.
+- `--dump-lu` preserves solution entries and works alone or with `--dump-mna`.
+- Numeric and factor checks accept panel framing while preserving labels and values.
 - Requested matrices remain visible on a singular solve.
 - Paths containing spaces work.
 - Missing files, missing `.end`, unknown controllers, and singular circuits
@@ -161,7 +182,7 @@ Final verification from the workspace root:
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run -- examples/voltage-divider.cir --dump-matrices
+cargo run -- examples/voltage-divider.cir --dump-mna --dump-lu
 ```
 
 ## Acceptance Criteria
@@ -173,6 +194,7 @@ The plan is complete when:
 - Voltages and currents have understandable labels, units, and signs.
 - All required element types have runnable examples.
 - MNA matrices can be inspected during the demonstration.
+- LU factors and row permutations can be inspected during the demonstration.
 - Failures have useful diagnostics and exit status.
 - Documented build, test, and example commands pass.
 - Submission instructions and the demonstration requirement are documented.

@@ -1,6 +1,8 @@
+use boxen::{BorderStyle, TextAlignment, text::text_width};
 use ferrispice_circuit::Circuit;
 use ferrispice_mna::{MnaSystem, UnknownKind};
 use ferrispice_solver::DcSolution;
+use miette::{IntoDiagnostic, WrapErr};
 use nalgebra::{DMatrix, DVector};
 
 /// significant digits for printed quantities and matrix entries.
@@ -20,15 +22,14 @@ pub(crate) fn print_validation(circuit: &Circuit, system: &MnaSystem) {
     println!("no analysis requested; add .dc to run linear DC analysis");
 }
 
-pub(crate) fn print_solution(circuit: &Circuit, solution: &DcSolution) {
+pub(crate) fn print_solution(circuit: &Circuit, solution: &DcSolution) -> miette::Result<()> {
     let layout = solution.layout();
     let width = layout.labels().map(str::len).max().unwrap_or(0);
 
-    println!("{}", circuit.title());
-    println!("linear DC analysis");
+    let mut lines = vec![circuit.title().to_owned()];
 
     if !solution.unknowns().is_empty() {
-        println!();
+        lines.push(String::new());
     }
 
     for (unknown, &value) in layout.unknowns().iter().zip(solution.unknowns().iter()) {
@@ -37,35 +38,46 @@ pub(crate) fn print_solution(circuit: &Circuit, solution: &DcSolution) {
             UnknownKind::BranchCurrent(_) => "A",
         };
 
-        println!("{:<width$} = {} {unit}", unknown.label, number(value));
+        lines.push(format!(
+            "{:<width$} = {} {unit}",
+            unknown.label,
+            number(value)
+        ));
     }
+
+    print_panel("linear DC analysis", &lines.join("\n"))
 }
 
 /// `G x + C dx/dt = b`, with rows labeled as KCL or branch equations.
-pub(crate) fn print_mna(circuit: &Circuit, system: &MnaSystem) {
+pub(crate) fn print_mna(circuit: &Circuit, system: &MnaSystem) -> miette::Result<()> {
     let columns: Vec<_> = system.layout.labels().map(str::to_owned).collect();
 
     let rows = equation_labels(circuit, system);
 
-    println!("MNA system: G x + C dx/dt = b");
-    println!();
-    println!("unknowns x:");
+    let mut unknowns = vec!["unknowns x:".to_owned()];
 
     for (index, (label, row)) in columns.iter().zip(&rows).enumerate() {
-        println!("  [{index}] {label:<w$}  row: {row}", w = width(&columns));
+        unknowns.push(format!(
+            "  [{index}] {label:<w$}  row: {row}",
+            w = width(&columns)
+        ));
     }
 
-    print_matrix("G", &system.g, &rows, &columns);
-    print_matrix("C", &system.c, &rows, &columns);
-
     let b = DMatrix::from_column_slice(system.b.len(), 1, system.b.as_slice());
+    let body = [
+        "G x + C dx/dt = b".to_owned(),
+        unknowns.join("\n"),
+        format_matrix("G", &system.g, &rows, &columns),
+        format_matrix("C", &system.c, &rows, &columns),
+        format_matrix("b", &b, &rows, &["b".to_owned()]),
+    ]
+    .join("\n\n");
 
-    print_matrix("b", &b, &rows, &["b".to_owned()]);
-    println!();
+    print_panel("MNA system", &body)
 }
 
 /// print a diagnostic factorization of G, with `P * G = L * U`
-pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) {
+pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) -> miette::Result<()> {
     // solve_dc computes its own factorization; this one is only for inspection
     let lu = system.g.clone().lu();
     let n = system.g.nrows();
@@ -91,12 +103,16 @@ pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) {
     let pivots: Vec<_> = (0..n).map(|index| format!("pivot {index}")).collect();
     let columns: Vec<_> = system.layout.labels().map(str::to_owned).collect();
 
-    println!("LU decomposition: P * G = L * U");
-    println!("factor rows: [position <- original MNA row] equation");
-    print_matrix("P", &p, &factor_positions, &original_positions);
-    print_matrix("L", &lu.l(), &rows, &pivots);
-    print_matrix("U", &lu.u(), &rows, &columns);
-    println!();
+    let body = [
+        "P * G = L * U".to_owned(),
+        "factor rows: [position <- original MNA row] equation".to_owned(),
+        format_matrix("P", &p, &factor_positions, &original_positions),
+        format_matrix("L", &lu.l(), &rows, &pivots),
+        format_matrix("U", &lu.u(), &rows, &columns),
+    ]
+    .join("\n\n");
+
+    print_panel("LU decomposition", &body)
 }
 
 fn equation_labels(circuit: &Circuit, system: &MnaSystem) -> Vec<String> {
@@ -123,13 +139,12 @@ fn equation_labels(circuit: &Circuit, system: &MnaSystem) -> Vec<String> {
         .collect()
 }
 
-fn print_matrix(name: &str, matrix: &DMatrix<f64>, rows: &[String], columns: &[String]) {
-    println!();
-    println!("{name}:");
+fn format_matrix(name: &str, matrix: &DMatrix<f64>, rows: &[String], columns: &[String]) -> String {
+    let mut output = format!("{name}:\n");
 
     if matrix.is_empty() {
-        println!("  (empty)");
-        return;
+        output.push_str("  (empty)");
+        return output;
     }
 
     let cells: Vec<Vec<String>> = matrix
@@ -150,23 +165,49 @@ fn print_matrix(name: &str, matrix: &DMatrix<f64>, rows: &[String], columns: &[S
         })
         .collect();
 
-    print!("  {:row_width$}", "");
+    output.push_str(&format!("  {:row_width$}", ""));
 
     for (column, label) in columns.iter().enumerate() {
-        print!("  {label:>w$}", w = column_widths[column]);
+        output.push_str(&format!("  {label:>w$}", w = column_widths[column]));
     }
-
-    println!();
 
     for (label, row) in rows.iter().zip(&cells) {
-        print!("  {label:<row_width$}");
+        output.push('\n');
+        output.push_str(&format!("  {label:<row_width$}"));
 
         for (column, cell) in row.iter().enumerate() {
-            print!("  {cell:>w$}", w = column_widths[column]);
+            output.push_str(&format!("  {cell:>w$}", w = column_widths[column]));
         }
-
-        println!();
     }
+
+    output
+}
+
+fn print_panel(title: &str, body: &str) -> miette::Result<()> {
+    let content_width = body
+        .lines()
+        .map(text_width)
+        .chain([text_width(title) + 2])
+        .max()
+        .unwrap_or(1);
+    let panel_width = content_width + 6;
+    if panel_width > boxen::get_terminal_width() {
+        println!("{title}\n\n{body}\n");
+        return Ok(());
+    }
+
+    let panel = boxen::builder()
+        .title(format!(" {title} "))
+        .border_style(BorderStyle::Round)
+        .padding((1, 2, 1, 2))
+        .text_alignment(TextAlignment::Left)
+        .width(panel_width)
+        .render(body)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("could not render {title} panel"))?;
+
+    println!("{panel}\n");
+    Ok(())
 }
 
 fn width(labels: &[String]) -> usize {

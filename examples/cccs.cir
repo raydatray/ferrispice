@@ -1,0 +1,10 @@
+CCCS current gain
+* Vsense measures 5 mA; 3 * 5 mA = 15 mA flows into out, so V(out) = 3 V.
+* The controlling source is declared after CCCS1.
+Vin in 0 DC 5
+R1 in sense 1000
+CCCS1 0 out Vsense 3
+Vsense sense 0 DC 0
+Rload out 0 200
+.dc
+.end

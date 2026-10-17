@@ -1,7 +1,7 @@
 use ferrispice_circuit::Circuit;
 use ferrispice_mna::{MnaSystem, UnknownKind};
 use ferrispice_solver::DcSolution;
-use nalgebra::DMatrix;
+use nalgebra::{DMatrix, DVector};
 
 /// significant digits for printed quantities and matrix entries.
 const SIGNIFICANT_DIGITS: i32 = 6;
@@ -45,7 +45,62 @@ pub(crate) fn print_solution(circuit: &Circuit, solution: &DcSolution) {
 pub(crate) fn print_mna(circuit: &Circuit, system: &MnaSystem) {
     let columns: Vec<_> = system.layout.labels().map(str::to_owned).collect();
 
-    let rows: Vec<_> = system
+    let rows = equation_labels(circuit, system);
+
+    println!("MNA system: G x + C dx/dt = b");
+    println!();
+    println!("unknowns x:");
+
+    for (index, (label, row)) in columns.iter().zip(&rows).enumerate() {
+        println!("  [{index}] {label:<w$}  row: {row}", w = width(&columns));
+    }
+
+    print_matrix("G", &system.g, &rows, &columns);
+    print_matrix("C", &system.c, &rows, &columns);
+
+    let b = DMatrix::from_column_slice(system.b.len(), 1, system.b.as_slice());
+
+    print_matrix("b", &b, &rows, &["b".to_owned()]);
+    println!();
+}
+
+/// print a diagnostic factorization of G, with `P * G = L * U`
+pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) {
+    // solve_dc computes its own factorization; this one is only for inspection
+    let lu = system.g.clone().lu();
+    let n = system.g.nrows();
+    let mut p = DMatrix::<f64>::identity(n, n);
+    lu.p().permute_rows(&mut p);
+
+    let mut row_order = DVector::from_iterator(n, 0..n);
+    lu.p().permute_rows(&mut row_order);
+    let original_equations = equation_labels(circuit, system);
+    let rows: Vec<_> = row_order
+        .iter()
+        .enumerate()
+        .map(|(position, &original)| {
+            format!(
+                "[{position} <- {original}] {}",
+                original_equations[original]
+            )
+        })
+        .collect();
+
+    let factor_positions: Vec<_> = (0..n).map(|index| format!("factor {index}")).collect();
+    let original_positions: Vec<_> = (0..n).map(|index| format!("original {index}")).collect();
+    let pivots: Vec<_> = (0..n).map(|index| format!("pivot {index}")).collect();
+    let columns: Vec<_> = system.layout.labels().map(str::to_owned).collect();
+
+    println!("LU decomposition: P * G = L * U");
+    println!("factor rows: [position <- original MNA row] equation");
+    print_matrix("P", &p, &factor_positions, &original_positions);
+    print_matrix("L", &lu.l(), &rows, &pivots);
+    print_matrix("U", &lu.u(), &rows, &columns);
+    println!();
+}
+
+fn equation_labels(circuit: &Circuit, system: &MnaSystem) -> Vec<String> {
+    system
         .layout
         .unknowns()
         .iter()
@@ -65,23 +120,7 @@ pub(crate) fn print_mna(circuit: &Circuit, system: &MnaSystem) {
                     .name
             ),
         })
-        .collect();
-
-    println!("MNA system: G x + C dx/dt = b");
-    println!();
-    println!("unknowns x:");
-
-    for (index, (label, row)) in columns.iter().zip(&rows).enumerate() {
-        println!("  [{index}] {label:<w$}  row: {row}", w = width(&columns));
-    }
-
-    print_matrix("G", &system.g, &rows, &columns);
-    print_matrix("C", &system.c, &rows, &columns);
-
-    let b = DMatrix::from_column_slice(system.b.len(), 1, system.b.as_slice());
-
-    print_matrix("b", &b, &rows, &["b".to_owned()]);
-    println!();
+        .collect()
 }
 
 fn print_matrix(name: &str, matrix: &DMatrix<f64>, rows: &[String], columns: &[String]) {

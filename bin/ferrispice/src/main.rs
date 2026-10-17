@@ -37,7 +37,7 @@ fn run(args: args::Args) -> miette::Result<()> {
 
     // repeated `.dc` records request the same single analysis
     let requests_dc = parsed.requests_dc();
-    if args.dump_mna || !requests_dc {
+    if args.dump_mna || args.dump_lu || !requests_dc {
         let system = match ferrispice_mna::assemble(&circuit) {
             Ok(system) => system,
             Err(error) => return Err(diagnostics::report(error, input_name, text)),
@@ -46,6 +46,10 @@ fn run(args: args::Args) -> miette::Result<()> {
         // matrices come before solving so they remain visible if the solve fails
         if args.dump_mna {
             output::print_mna(&circuit, &system);
+        }
+
+        if args.dump_lu {
+            output::print_lu(&circuit, &system);
         }
 
         if !requests_dc {

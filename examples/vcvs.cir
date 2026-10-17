@@ -1,0 +1,8 @@
+VCVS amplifier
+* V(out) = 10 * V(in) = 5 V.
+Vin in 0 DC 0.5
+Rin in 0 1000
+VCVS1 out 0 in 0 10
+Rload out 0 2000
+.dc
+.end

@@ -1,0 +1,7 @@
+VCCS transconductance
+* 0.01 S * 0.2 V = 2 mA flows from ground into out, so V(out) = 2 V.
+Vin in 0 DC 0.2
+VCCS1 0 out in 0 0.01
+Rload out 0 1000
+.dc
+.end

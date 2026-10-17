@@ -1,0 +1,10 @@
+Capacitor and inductor at DC
+* At DC the inductor is a short and the capacitor is open:
+* V(out) = 5 V * 4k / (1k + 4k) = 4 V, I(L1) = 1 mA, I(C1) = 0.
+Vin in 0 DC 5
+R1 in mid 1000
+L1 mid out 10e-3
+C1 out 0 1e-6
+R2 out 0 4000
+.dc
+.end

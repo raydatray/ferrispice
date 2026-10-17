@@ -5,10 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+boxen.workspace = true
 clap.workspace = true
 ferrispice-netlist = { path = "../../crates/netlist" }
 ferrispice-circuit = { path = "../../crates/circuit" }
+ferrispice-mna = { path = "../../crates/mna" }
+ferrispice-solver = { path = "../../crates/solver" }
 miette.workspace = true
+nalgebra.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

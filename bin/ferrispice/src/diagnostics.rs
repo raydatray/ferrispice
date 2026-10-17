@@ -1,5 +1,7 @@
 use ferrispice_circuit::{CircuitError, ElementErrorKind};
+use ferrispice_mna::AssemblyError;
 use ferrispice_netlist::{ByteSpan, ParseError, ParseErrorKind};
+use ferrispice_solver::{DcError, SolveError};
 use miette::{Diagnostic, NamedSource, SourceSpan};
 use thiserror::Error;
 
@@ -11,6 +13,37 @@ pub(crate) enum NetlistCause {
 
     #[error(transparent)]
     Circuit(#[from] CircuitError),
+    #[error(transparent)]
+    Assembly(#[from] AssemblyError),
+}
+
+/// a solve failure has no single source location, names the input instead
+#[derive(Debug, Error, Diagnostic)]
+#[error("{input_name}: linear DC analysis failed")]
+struct AnalysisDiagnostic {
+    input_name: String,
+    #[source]
+    cause: SolveError,
+    #[help]
+    help: Option<&'static str>,
+}
+
+pub(crate) fn analysis(error: DcError, input_name: String, contents: String) -> miette::Report {
+    match error {
+        DcError::Assembly(error) => report(error, input_name, contents),
+        DcError::Solve(cause) => {
+            let help = matches!(cause, SolveError::Singular { .. }).then_some(
+                "the equations do not determine every unknown. floating nodes, \
+                 current sources in series, and loops of voltage sources or inductors \
+                 can cause this.",
+            );
+            miette::Report::new(AnalysisDiagnostic {
+                input_name,
+                cause,
+                help,
+            })
+        }
+    }
 }
 
 #[derive(Debug, Error, Diagnostic)]
@@ -66,6 +99,7 @@ impl NetlistDiagnostic {
                         .to_owned(),
                 ),
             ),
+            NetlistCause::Assembly(error) => (Some(error.span), error.kind.to_string(), None, None),
         };
         let message = match span {
             Some(_) => cause.to_string(),

@@ -1,0 +1,6 @@
+Current source into a resistor
+* 2 mA enters n1 through I1, so V(n1) = 2 mA * 1 kOhm = 2 V.
+I1 0 n1 DC 2e-3
+R1 n1 0 1000
+.dc
+.end

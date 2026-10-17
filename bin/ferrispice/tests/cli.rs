@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use nalgebra::DMatrix;
 
 static NEXT_INPUT: AtomicUsize = AtomicUsize::new(0);
 
@@ -50,27 +53,336 @@ fn assert_usage(output: &[u8]) {
     );
 }
 
-#[test]
-fn validates_the_divider_from_a_path_containing_spaces() {
-    let input = Input::new(include_str!("../../../examples/voltage-divider.cir"));
+fn output_text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            line.trim_matches(|c: char| {
+                c.is_whitespace() || matches!(c, '│' | '╭' | '╮' | '╰' | '╯' | '─')
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn success(text: &str) -> String {
+    let input = Input::new(text);
     let output = run(&[input.path.as_os_str()]);
-    assert!(output.status.success(), "{:?}", output);
-    assert!(output.stderr.is_empty());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Name of circuit"));
-    assert!(stdout.contains("2 non-ground nodes, 3 elements"));
-    assert!(stdout.contains("DC requested: true"));
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    output_text(output.stdout)
+}
+
+/// Parse `NAME(...) = value` result lines, ignoring units and alignment.
+fn results(stdout: &str) -> HashMap<String, f64> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (label, value) = line.split_once('=')?;
+            let value = value.split_whitespace().next()?.parse().ok()?;
+            Some((label.trim().to_owned(), value))
+        })
+        .collect()
+}
+
+fn assert_results(stdout: &str, expected: &[(&str, f64)]) {
+    let results = results(stdout);
+    for &(label, value) in expected {
+        let actual = results[label];
+        assert!(
+            (actual - value).abs() <= 1e-9 * (1.0 + value.abs()),
+            "{label}: expected {value}, got {actual}\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn solves_the_divider_from_a_path_containing_spaces() {
+    let stdout = success(DIVIDER);
+    assert!(stdout.contains("linear DC analysis"), "{stdout}");
+    let labels: Vec<_> = stdout
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(label, _)| label.trim())
+        .collect();
+    assert_eq!(labels, ["V(n1)", "V(n2)", "I(Vin)"], "{stdout}");
+    assert_results(
+        &stdout,
+        &[("V(n1)", 6.0), ("V(n2)", 2.0), ("I(Vin)", -0.04)],
+    );
+}
+
+#[test]
+fn dc_may_appear_anywhere_before_end_and_repeats_run_once() {
+    for text in [
+        "Divider\n.dc\nVin n1 0 DC 6\nR1 n1 n2 100\nR2 n2 0 50\n.end\n",
+        "Divider\nVin n1 0 DC 6\n.dc\nR1 n1 n2 100\nR2 n2 0 50\n.end\n",
+        "Divider\nVin n1 0 DC 6\n.DC\nR1 n1 n2 100\n.dc\nR2 n2 0 50\n.dc\n.end\n",
+    ] {
+        let stdout = success(text);
+        assert_eq!(stdout.matches("linear DC analysis").count(), 1, "{stdout}");
+        assert_eq!(stdout.matches("V(n2)").count(), 1, "{stdout}");
+        assert_results(&stdout, &[("V(n2)", 2.0), ("I(Vin)", -0.04)]);
+    }
 }
 
 #[test]
 fn validates_a_circuit_without_an_analysis_request() {
-    let input = Input::new("No analysis\nR1 a 0 100\n.end\n");
-    let output = run(&[input.path.as_os_str()]);
-    assert!(output.status.success(), "{:?}", output);
+    let stdout = success("No analysis\nR1 a 0 100\n.end\n");
+    assert!(stdout.contains("no analysis requested"), "{stdout}");
     assert!(
-        String::from_utf8(output.stdout)
+        !stdout.lines().any(|line| line == "linear DC analysis"),
+        "{stdout}"
+    );
+    assert!(results(&stdout).is_empty(), "{stdout}");
+}
+
+#[test]
+fn singular_circuits_fail_without_partial_results() {
+    for text in [
+        "Floating\nR1 a b 10\nR2 c 0 1\n.dc\n.end\n",
+        "Conflict\nV1 p 0 DC 1\nV2 p 0 DC 2\n.dc\n.end\n",
+    ] {
+        let input = Input::new(text);
+        let output = run(&[input.path.as_os_str()]);
+        assert!(!output.status.success(), "{text:?}");
+        assert!(output.stdout.is_empty(), "{text:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("ERROR"), "{stderr}");
+        assert!(stderr.contains("input with spaces.cir"), "{stderr}");
+        assert!(stderr.contains("linear DC analysis failed"), "{stderr}");
+        assert!(stderr.contains("singular"), "{stderr}");
+    }
+}
+
+#[test]
+fn singular_circuits_still_validate_without_dc() {
+    let stdout = success("Floating\nR1 a b 10\nR2 c 0 1\n.end\n");
+    assert!(stdout.contains("no analysis requested"), "{stdout}");
+}
+
+const DIVIDER: &str = "Divider\nVin n1 0 DC 6\nR1 n1 n2 100\nR2 n2 0 50\n.dc\n.end\n";
+
+#[test]
+fn results_have_aligned_labels_and_units() {
+    let stdout = success(DIVIDER);
+    for line in ["V(n1)  = 6 V", "V(n2)  = 2 V", "I(Vin) = -0.04 A"] {
+        assert!(
+            stdout.lines().any(|output| output == line),
+            "{line:?}\n{stdout}"
+        );
+    }
+}
+
+/// Parse the rows of a printed matrix section into `(row label, values)`.
+fn matrix(stdout: &str, name: &str, columns: usize) -> Vec<(String, Vec<f64>)> {
+    let mut lines = stdout
+        .lines()
+        .skip_while(|line| *line != format!("{name}:"))
+        .skip(2);
+    let mut rows = Vec::new();
+    for line in lines.by_ref() {
+        let tokens: Vec<_> = line.split_whitespace().collect();
+        if tokens.len() <= columns {
+            break;
+        }
+        let (label, values) = tokens.split_at(tokens.len() - columns);
+        rows.push((
+            label.join(" "),
+            values.iter().map(|value| value.parse().unwrap()).collect(),
+        ));
+    }
+    rows
+}
+
+fn dump_mna(text: &str) -> Output {
+    let input = Input::new(text);
+    run(&[input.path.as_os_str(), OsStr::new("--dump-mna")])
+}
+
+#[test]
+fn dumped_matrices_have_stable_labels_and_values() {
+    let output = dump_mna(DIVIDER);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    let positions: Vec<_> = ["[0] V(n1)", "[1] V(n2)", "[2] I(Vin)"]
+        .iter()
+        .map(|label| {
+            stdout
+                .find(label)
+                .unwrap_or_else(|| panic!("{label}\n{stdout}"))
+        })
+        .collect();
+    assert!(positions.is_sorted(), "{stdout}");
+    assert_eq!(
+        matrix(&stdout, "G", 3),
+        [
+            ("KCL n1".to_owned(), vec![0.01, -0.01, 1.0]),
+            ("KCL n2".to_owned(), vec![-0.01, 0.03, 0.0]),
+            ("branch Vin".to_owned(), vec![1.0, 0.0, 0.0]),
+        ]
+    );
+    assert!(
+        matrix(&stdout, "C", 3)
+            .iter()
+            .all(|(_, row)| row == &[0.0; 3])
+    );
+    let b: Vec<_> = matrix(&stdout, "b", 1)
+        .into_iter()
+        .map(|(_, row)| row[0])
+        .collect();
+    assert_eq!(b, [0.0, 0.0, 6.0]);
+    assert!(stdout.find("G:").unwrap() < stdout.find("linear DC analysis").unwrap());
+    assert_results(&stdout, &[("V(n2)", 2.0)]);
+}
+
+#[test]
+fn dumped_storage_terms_and_branch_rows_are_labeled() {
+    let output =
+        dump_mna("Storage\nI1 0 a DC 1\nR1 a 0 1\nC1 a 0 2e-6\nL1 a b 3e-3\nR2 b 0 1\n.end\n");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    let c = matrix(&stdout, "C", 3);
+    assert_eq!(c[0], ("KCL a".to_owned(), vec![2e-6, 0.0, 0.0]));
+    assert_eq!(c[2], ("branch L1".to_owned(), vec![0.0, 0.0, -3e-3]));
+    assert!(stdout.contains("no analysis requested"), "{stdout}");
+}
+
+#[test]
+fn matrices_remain_visible_when_the_solve_fails() {
+    let output = dump_mna("Floating\nR1 a b 10\nR2 c 0 1\n.dc\n.end\n");
+    assert!(!output.status.success());
+    let stdout = output_text(output.stdout);
+    assert_eq!(
+        matrix(&stdout, "G", 3),
+        [
+            ("KCL a".to_owned(), vec![0.1, -0.1, 0.0]),
+            ("KCL b".to_owned(), vec![-0.1, 0.1, 0.0]),
+            ("KCL c".to_owned(), vec![0.0, 0.0, 1.0]),
+        ]
+    );
+    assert!(
+        !stdout.lines().any(|line| line == "linear DC analysis"),
+        "{stdout}"
+    );
+    assert!(
+        String::from_utf8(output.stderr)
             .unwrap()
-            .contains("DC requested: false")
+            .contains("singular")
+    );
+}
+
+fn dump_lu(text: &str) -> Output {
+    let input = Input::new(text);
+    run(&[input.path.as_os_str(), OsStr::new("--dump-lu")])
+}
+
+fn dense_matrix(stdout: &str, name: &str, size: usize) -> DMatrix<f64> {
+    let rows = matrix(stdout, name, size);
+    assert_eq!(rows.len(), size, "{name}\n{stdout}");
+    let values: Vec<_> = rows.into_iter().flat_map(|(_, row)| row).collect();
+    DMatrix::from_row_slice(size, size, &values)
+}
+
+#[test]
+fn dumped_lu_factors_reconstruct_the_pivoted_mna_system() {
+    let input = Input::new("Pivot cycle\nV1 a b DC 1\nR1 a 0 2\nR2 b 0 4\n.dc\n.end\n");
+    let output = run(&[
+        input.path.as_os_str(),
+        OsStr::new("--dump-mna"),
+        OsStr::new("--dump-lu"),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    let g = dense_matrix(&stdout, "G", 3);
+    let p = dense_matrix(&stdout, "P", 3);
+    let l = dense_matrix(&stdout, "L", 3);
+    let u = dense_matrix(&stdout, "U", 3);
+    let identity = DMatrix::identity(3, 3);
+
+    assert_ne!(p, identity, "the circuit must exercise row pivoting");
+    assert_ne!(p, p.transpose(), "the row permutation must be a cycle");
+    assert_eq!(p.transpose() * &p, identity);
+    let expected_rows = ["[0 <- 2] branch V1", "[1 <- 0] KCL a", "[2 <- 1] KCL b"];
+    for name in ["L", "U"] {
+        let labels: Vec<_> = matrix(&stdout, name, 3)
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect();
+        assert_eq!(labels, expected_rows, "{name}\n{stdout}");
+    }
+    let l_header = stdout
+        .lines()
+        .skip_while(|line| *line != "L:")
+        .nth(1)
+        .unwrap();
+    assert_eq!(
+        l_header.split_whitespace().collect::<Vec<_>>(),
+        ["pivot", "0", "pivot", "1", "pivot", "2"]
+    );
+    // printed factors have six significant digits
+    assert!((&p * &g - &l * &u).amax() < 1e-6, "{stdout}");
+    assert!(stdout.find("U:").unwrap() < stdout.find("linear DC analysis").unwrap());
+}
+
+#[test]
+fn lu_dump_preserves_the_solution_without_requesting_mna_output() {
+    let normal = success(DIVIDER);
+    let output = dump_lu(DIVIDER);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let stdout = output_text(output.stdout);
+
+    assert_eq!(results(&stdout), results(&normal));
+    for name in ["P:", "L:", "U:"] {
+        assert!(stdout.lines().any(|line| line == name), "{stdout}");
+    }
+    assert!(!stdout.lines().any(|line| line == "G:"), "{stdout}");
+}
+
+#[test]
+fn lu_factors_remain_visible_when_the_solve_fails() {
+    let output = dump_lu("Floating\nR1 a b 10\nR2 c 0 1\n.dc\n.end\n");
+    assert!(!output.status.success());
+    let stdout = output_text(output.stdout);
+    for name in ["P", "L", "U"] {
+        assert_eq!(matrix(&stdout, name, 3).len(), 3, "{stdout}");
+    }
+    assert!(results(&stdout).is_empty(), "{stdout}");
+    assert!(
+        !stdout.lines().any(|line| line == "linear DC analysis"),
+        "{stdout}"
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("singular")
+    );
+}
+
+#[test]
+fn lu_dump_does_not_request_dc_analysis() {
+    let output = dump_lu("No analysis\nV1 a 0 DC 2\nR1 a 0 1\n.end\n");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    assert!(stdout.contains("no analysis requested"), "{stdout}");
+    assert!(results(&stdout).is_empty(), "{stdout}");
+    for name in ["P", "L", "U"] {
+        assert_eq!(matrix(&stdout, name, 2).len(), 2, "{stdout}");
+    }
+}
+
+#[test]
+fn lu_dump_handles_an_empty_system() {
+    let output = dump_lu("Empty\n.dc\n.end\n");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    assert_eq!(stdout.matches("(empty)").count(), 3, "{stdout}");
+    assert!(results(&stdout).is_empty(), "{stdout}");
+    assert!(
+        stdout.lines().any(|line| line == "linear DC analysis"),
+        "{stdout}"
     );
 }
 

@@ -4,8 +4,8 @@ use ferrispice_netlist::{ParsedElement, ParsedKind, ParsedNetlist};
 
 use crate::model::name_key;
 use crate::{
-    Circuit, CircuitError, Element, ElementError, ElementErrorKind, ElementId, ElementKind, GROUND,
-    Node, NodeId,
+    Circuit, CircuitError, DEFAULT_SATURATION_CURRENT, DEFAULT_THERMAL_VOLTAGE, Element,
+    ElementError, ElementErrorKind, ElementId, ElementKind, GROUND, Node, NodeId,
 };
 
 /// resolve names and validate parameters without allocating any matrix indices
@@ -226,12 +226,11 @@ fn resolve_kind(element: &ParsedElement, registry: &Registry) -> Result<ElementK
             control: registry.controller_id(element, control)?,
             gain: *gain,
         },
-        ParsedKind::Diode => {
-            return Err(error(
-                element,
-                ElementErrorKind::UnsupportedElement { kind: "diode" },
-            ));
-        }
+        // the netlist has no diode parameters; every diode uses the defaults
+        ParsedKind::Diode => ElementKind::Diode {
+            saturation_current: DEFAULT_SATURATION_CURRENT,
+            thermal_voltage: DEFAULT_THERMAL_VOLTAGE,
+        },
     })
 }
 
@@ -257,6 +256,8 @@ fn validate_parameters(element: &ParsedElement, kind: &ElementKind) -> Result<()
         ElementKind::Ccvs {
             transresistance, ..
         } => finite(element, "transresistance", transresistance)?,
+        // diode parameters are fixed positive constants, not netlist values
+        ElementKind::Diode { .. } => {}
     }
     Ok(())
 }

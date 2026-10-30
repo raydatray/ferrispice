@@ -138,6 +138,7 @@ fn element_current(element: &Element, layout: &UnknownLayout, unknowns: &DVector
         | ElementKind::VoltageSource { .. }
         | ElementKind::Vcvs { .. }
         | ElementKind::Ccvs { .. } => branch_current(element.id, layout, unknowns),
+        ElementKind::Diode { .. } => unreachable!("assembly rejects diodes"),
     }
 }
 

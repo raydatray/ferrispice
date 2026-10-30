@@ -74,7 +74,17 @@ pub enum ElementKind {
         control: ElementId,
         gain: f64,
     },
+    Diode {
+        saturation_current: f64,
+        thermal_voltage: f64,
+    },
 }
+
+/// default saturation current `Is`, in amperes
+pub const DEFAULT_SATURATION_CURRENT: f64 = 1e-15;
+
+/// default thermal voltage `Vt`, in volts
+pub const DEFAULT_THERMAL_VOLTAGE: f64 = 0.025;
 
 impl ElementKind {
     /// whether this element get a current unknown in the MNA
@@ -99,6 +109,7 @@ impl ElementKind {
             Self::Vccs { .. } => "VCCS",
             Self::Ccvs { .. } => "CCVS",
             Self::Cccs { .. } => "CCCS",
+            Self::Diode { .. } => "diode",
         }
     }
 }

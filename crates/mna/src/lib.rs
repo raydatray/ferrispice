@@ -70,6 +70,12 @@ pub fn assemble(circuit: &Circuit) -> Result<MnaSystem, AssemblyError> {
             ElementKind::Cccs { control, gain } => {
                 stamps::controlled::cccs(&mut builder, element, control, gain)?
             }
+            ElementKind::Diode { .. } => {
+                return Err(AssemblyError::new(
+                    element,
+                    AssemblyErrorKind::UnsupportedElement { kind: "diode" },
+                ));
+            }
         }
         tracing::trace!(element = element.name, "stamped element");
     }

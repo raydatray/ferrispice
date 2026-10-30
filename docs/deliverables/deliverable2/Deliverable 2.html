@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+    <head>
+        <link
+            rel="stylesheet"
+            href="https://s.brightspace.com/lib/fonts/0.6.1/fonts.css"
+        />
+        <link
+            rel="stylesheet"
+            href="https://templates.lcs.brightspace.com/lib/assets/css/styles.min.css"
+        />
+    </head>
+    <body
+        style="
+            color: rgb(32, 33, 34);
+            font-family: Lato, sans-serif;
+            font-size: 12px;
+        "
+    >
+        <p style="text-align: center">
+            <strong><span style="font-size: 24px"></span></strong>
+        </p>
+        <p style="text-align: center">
+            <strong
+                ><span style="font-size: 24px">ECSE 472 Project</span></strong
+            ><br /><strong
+                ><span style="font-size: 24px">Deliverable 2</span></strong
+            >
+        </p>
+        <p><strong>General description</strong></p>
+        <p>
+            This objective of this deliverable is to add the diode stamp and to
+            design the nonlinear DC analysis algorithm.
+        </p>
+        <p><strong>The circuit netlist&nbsp;</strong></p>
+        <p>Below is an example netlist:</p>
+        <p>
+            <span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >* diode circuit</span
+            ><br /><span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >Vin n1 0 DC 1</span
+            ><br /><span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >D1 n1 n2</span
+            ><br /><span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >R n2 0 50</span
+            ><br /><span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >.dc</span
+            ><br /><span
+                style="
+                    font-family: &quot;courier new&quot;, courier, sans-serif;
+                "
+                >.end</span
+            >
+        </p>
+        <p>For the diode, Use Is = 1e-14A and Vt = 0.025V.</p>
+        <p>
+            If you run the circuit above with, the result of your simulation
+            should be: V1 = 1, V2 = 0.2673, and IE = 0.0053.
+        </p>
+        <p><strong>Deliverables</strong></p>
+        <p>
+            Pass by my office to demo your deliverable on any of the following
+            days:
+        </p>
+        <ol>
+            <li>TBA</li>
+        </ol>
+    </body>
+</html>

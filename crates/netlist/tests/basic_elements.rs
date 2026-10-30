@@ -101,7 +101,7 @@ fn invalid_numbers_point_to_the_value_token() {
 
 #[test]
 fn rejects_unimplemented_elements_instead_of_dropping_them() {
-    let error = parse("Title\nD1 a 0 model\n.end").unwrap_err();
+    let error = parse("Title\nQ1 a 0 model\n.end").unwrap_err();
 
     assert!(matches!(
         error.kind,

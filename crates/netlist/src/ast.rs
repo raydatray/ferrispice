@@ -72,4 +72,6 @@ pub enum ParsedKind {
         control: String,
         gain: f64,
     },
+    /// `positive` is the anode and `negative` is the cathode
+    Diode,
 }

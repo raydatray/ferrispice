@@ -44,4 +44,7 @@ pub enum ElementErrorKind {
 
     #[error("controlling element {name:?} is a {kind} without an explicit branch-current unknown")]
     UnsupportedController { name: String, kind: &'static str },
+
+    #[error("{kind} elements are not supported by the circuit model yet")]
+    UnsupportedElement { kind: &'static str },
 }

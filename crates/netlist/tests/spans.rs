@@ -14,7 +14,7 @@ fn numeric_errors_highlight_only_the_value_after_unicode_and_crlf() {
 fn syntax_errors_highlight_the_relevant_token_or_record() {
     for (text, expected) in [
         ("Title\nV1 a 0 AC 1\n.end", "AC"),
-        ("Title\nD1 a 0 model\n.end", "D1"),
+        ("Title\nQ1 a 0 model\n.end", "Q1"),
         ("Title\n  R1 a 0 1 extra  \n.end", "R1 a 0 1 extra"),
         ("Title\nI1 a 0 DC NaN\n.end", "NaN"),
     ] {

@@ -13,6 +13,7 @@ enum Family {
     Vccs,
     Ccvs,
     Cccs,
+    Diode,
 }
 
 pub(crate) fn parse_element(record: RawElement<'_>) -> Result<ParsedElement, ParseError> {
@@ -81,6 +82,10 @@ pub(crate) fn parse_element(record: RawElement<'_>) -> Result<ParsedElement, Par
                 gain,
             }
         }
+        Family::Diode => {
+            require_fields(&record.tokens, 3, "Dname anode cathode")?;
+            ParsedKind::Diode
+        }
     };
 
     tracing::trace!(
@@ -119,6 +124,7 @@ fn classify(name: &str) -> Option<Family> {
         b'L' => Some(Family::Inductor),
         b'V' => Some(Family::VoltageSource),
         b'I' => Some(Family::CurrentSource),
+        b'D' => Some(Family::Diode),
         _ => None,
     }
 }

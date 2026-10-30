@@ -226,6 +226,12 @@ fn resolve_kind(element: &ParsedElement, registry: &Registry) -> Result<ElementK
             control: registry.controller_id(element, control)?,
             gain: *gain,
         },
+        ParsedKind::Diode => {
+            return Err(error(
+                element,
+                ElementErrorKind::UnsupportedElement { kind: "diode" },
+            ));
+        }
     })
 }
 

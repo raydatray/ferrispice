@@ -29,6 +29,18 @@ cargo build --release
 - without `.dc`, the circuit is validated and assembled, and a short
 summary is printed instead of results
 
+### examples
+
+```sh
+cargo run -- examples/voltage-divider.cir
+cargo run -- examples/current-source.cir
+cargo run -- examples/storage-dc.cir
+cargo run -- examples/vcvs.cir
+cargo run -- examples/vccs.cir
+cargo run -- examples/ccvs.cir
+cargo run -- examples/cccs.cir
+```
+
 ### `--dump-mna` 
 - prints `G`, `C`, `b`, and the unknown ordering before solving
 - rows are labeled `KCL <node>` for node equations and `branch <element>` for branch constraints 

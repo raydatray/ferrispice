@@ -9,6 +9,7 @@ use nalgebra::{DMatrix, DVector};
 pub use builder::MatrixBuilder;
 pub use error::{AssemblyError, AssemblyErrorKind};
 pub use layout::{Unknown, UnknownKind, UnknownLayout};
+pub use stamps::diode::{DiodeOperatingPoint, NonFiniteDiode, diode_operating_point};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MnaSystem {

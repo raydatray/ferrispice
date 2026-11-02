@@ -221,6 +221,21 @@ mod tests {
     }
 
     #[test]
+    fn renders_malformed_diode_records() {
+        let text = "* diode circuit\nD1 n1\n.end\n";
+        let error = ferrispice_netlist::parse(text).unwrap_err();
+        let diagnostic = NetlistDiagnostic::new(error.into(), "diode.cir".into(), text.into());
+        let labels: Vec<_> = diagnostic.labels().unwrap().collect();
+        assert_eq!(
+            &text[labels[0].offset()..labels[0].offset() + labels[0].len()],
+            "D1 n1"
+        );
+        let output = render(&diagnostic);
+        assert!(output.contains("diode.cir"));
+        assert!(output.contains("expected Dname anode cathode; found 2 fields"));
+    }
+
+    #[test]
     fn empty_input_has_a_readable_diagnostic() {
         let error = ferrispice_netlist::parse("").unwrap_err();
         let diagnostic = NetlistDiagnostic::new(error.into(), "empty.cir".into(), String::new());

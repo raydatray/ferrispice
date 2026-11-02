@@ -1,6 +1,6 @@
 use boxen::{BorderStyle, TextAlignment, text::text_width};
-use ferrispice_circuit::Circuit;
-use ferrispice_mna::{MnaSystem, UnknownKind};
+use ferrispice_circuit::{Circuit, ElementKind};
+use ferrispice_mna::{MnaSystem, UnknownKind, UnknownLayout};
 use ferrispice_solver::DcSolution;
 use miette::{IntoDiagnostic, WrapErr};
 use nalgebra::{DMatrix, DVector};
@@ -11,15 +11,26 @@ const SIGNIFICANT_DIGITS: i32 = 6;
 /// magnitudes below this print as zero, matching the solver's absolute residual tolerance
 const ZERO_THRESHOLD: f64 = 1e-12;
 
-pub(crate) fn print_validation(circuit: &Circuit, system: &MnaSystem) {
+pub(crate) fn print_validation(circuit: &Circuit, layout: &UnknownLayout) {
+    let diodes = circuit
+        .elements()
+        .iter()
+        .filter(|element| matches!(element.kind, ElementKind::Diode { .. }))
+        .count();
+    let nonlinear = match diodes {
+        0 => String::new(),
+        1 => " (1 diode)".to_owned(),
+        count => format!(" ({count} diodes)"),
+    };
+
     println!("{}", circuit.title());
     println!(
-        "validated circuit: {} non-ground nodes, {} elements, {} unknowns",
+        "validated circuit: {} non-ground nodes, {} elements{nonlinear}, {} unknowns",
         circuit.non_ground_nodes().count(),
         circuit.elements().len(),
-        system.layout.len(),
+        layout.len(),
     );
-    println!("no analysis requested; add .dc to run linear DC analysis");
+    println!("no analysis requested; add .dc to run DC analysis");
 }
 
 pub(crate) fn print_solution(circuit: &Circuit, solution: &DcSolution) -> miette::Result<()> {

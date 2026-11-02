@@ -156,6 +156,54 @@ fn singular_circuits_fail_without_partial_results() {
     }
 }
 
+const DIODE_CIRCUIT: &str = "* diode circuit\nVin n1 0 DC 1\nD1 n1 n2\nR n2 0 50\n.end\n";
+
+#[test]
+fn inspects_a_circuit_containing_a_diode() {
+    let stdout = success(DIODE_CIRCUIT);
+    assert!(stdout.starts_with("* diode circuit\n"), "{stdout}");
+    assert!(
+        stdout.contains("validated circuit: 2 non-ground nodes, 3 elements (1 diode), 3 unknowns"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("no analysis requested"), "{stdout}");
+    assert!(results(&stdout).is_empty(), "{stdout}");
+
+    let stdout = success("Two diodes\nD1 a 0\nD2 0 a\nR1 a 0 1\n.end\n");
+    assert!(stdout.contains("3 elements (2 diodes)"), "{stdout}");
+}
+
+#[test]
+fn malformed_diode_records_render_source_context() {
+    for (text, record) in [
+        ("Diode\nD1 n1\n.end\n", "D1 n1"),
+        ("Diode\nD1 n1 0 model\n.end\n", "D1 n1 0 model"),
+    ] {
+        let input = Input::new(text);
+        let output = run(&[input.path.as_os_str()]);
+        assert!(!output.status.success(), "{text:?}");
+        assert!(output.stdout.is_empty(), "{text:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("Dname anode cathode"), "{stderr}");
+        assert!(stderr.contains(record), "{stderr}");
+        assert!(stderr.contains("input with spaces.cir"), "{stderr}");
+    }
+}
+
+#[test]
+fn diode_analysis_reports_the_unimplemented_stamp() {
+    let input = Input::new(&DIODE_CIRCUIT.replace(".end", ".dc\n.end"));
+    let output = run(&[input.path.as_os_str()]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("diode stamps are not implemented yet"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("D1 n1 n2"), "{stderr}");
+}
+
 #[test]
 fn singular_circuits_still_validate_without_dc() {
     let stdout = success("Floating\nR1 a b 10\nR2 c 0 1\n.end\n");

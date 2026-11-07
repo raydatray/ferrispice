@@ -61,7 +61,7 @@ fn run(args: args::Args) -> miette::Result<()> {
 
     let solution = match ferrispice_solver::solve_dc(&circuit) {
         Ok(solution) => solution,
-        Err(error) => return Err(diagnostics::analysis(error, input_name, text)),
+        Err(error) => return Err(diagnostics::analysis(error, &circuit, input_name, text)),
     };
 
     output::print_solution(&circuit, &solution)?;

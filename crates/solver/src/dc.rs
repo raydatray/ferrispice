@@ -39,9 +39,9 @@ pub enum DcError {
 /// Newton failed on the full circuit, and ramping the sources did not reach it
 #[derive(Clone, Debug, Error, PartialEq)]
 #[error(
-    "Newton-Raphson failed on the full circuit, and source stepping stopped at {:.6}% of the \
-     source values: {}",
-    100.0 * stepping.reached,
+    "Newton-Raphson failed on the full circuit, and source stepping stopped with the \
+     sources scaled by {:.3e}: {}",
+    stepping.reached,
     stepping.last_failure().map_or_else(|| direct.to_string(), ToString::to_string)
 )]
 pub struct SourceSteppingFailure {

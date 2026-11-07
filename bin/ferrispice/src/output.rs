@@ -1,7 +1,7 @@
 use boxen::{BorderStyle, TextAlignment, text::text_width};
 use ferrispice_circuit::{Circuit, ElementKind};
 use ferrispice_mna::{MnaSystem, UnknownKind, UnknownLayout};
-use ferrispice_solver::DcSolution;
+use ferrispice_solver::{DcMethod, DcSolution};
 use miette::{IntoDiagnostic, WrapErr};
 use nalgebra::{DMatrix, DVector};
 
@@ -56,7 +56,33 @@ pub(crate) fn print_solution(circuit: &Circuit, solution: &DcSolution) -> miette
         ));
     }
 
-    print_panel("linear DC analysis", &lines.join("\n"))
+    let title = match solution.method() {
+        DcMethod::Linear => "linear DC analysis",
+        DcMethod::Newton(_) | DcMethod::SourceStepping { .. } => {
+            lines.push(String::new());
+            lines.push(convergence_summary(solution));
+            "nonlinear DC analysis"
+        }
+    };
+
+    print_panel(title, &lines.join("\n"))
+}
+
+/// how Newton-Raphson reached the operating point
+fn convergence_summary(solution: &DcSolution) -> String {
+    let iterations = solution.newton_iterations();
+    let plural =
+        |count: usize, word: &str| format!("{count} {word}{}", if count == 1 { "" } else { "s" });
+
+    match solution.method() {
+        DcMethod::SourceStepping { stepping, .. } => format!(
+            "converged with source stepping: {} accepted, {} rejected, {}",
+            plural(stepping.accepted().count(), "step"),
+            stepping.rejected(),
+            plural(iterations, "Newton iteration"),
+        ),
+        _ => format!("converged in {}", plural(iterations, "Newton iteration")),
+    }
 }
 
 /// `G x + C dx/dt = b`, with rows labeled as KCL or branch equations.

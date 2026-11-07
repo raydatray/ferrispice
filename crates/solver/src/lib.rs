@@ -1,5 +1,10 @@
 mod dc;
 mod linear;
+mod newton;
 
 pub use dc::{DcError, DcSolution, solve_dc};
 pub use linear::{ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE, SolveError, solve_linear};
+pub use newton::{
+    NewtonError, NewtonErrorKind, NewtonIteration, NewtonOptions, NewtonProblem, NewtonSolution,
+    solve_newton,
+};

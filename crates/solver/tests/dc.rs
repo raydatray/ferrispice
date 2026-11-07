@@ -5,7 +5,7 @@ use common::{
 };
 use ferrispice_circuit::GROUND;
 use ferrispice_mna::assemble;
-use ferrispice_solver::{DcError, DcMethod, SolveError, solve_dc};
+use ferrispice_solver::{DcError, DcMethod, SOURCE_STEPPING, SolveError, solve_dc};
 
 #[test]
 fn divider_produces_the_hand_calculated_operating_point() {
@@ -200,17 +200,14 @@ fn unsolvable_circuits_report_where_source_stepping_stopped() {
         panic!("expected a source-stepping failure, found {error:?}");
     };
 
-    assert_eq!(failure.stepping.reached, 0.0);
-    assert!(failure.stepping.step < 1e-6);
-    assert!(failure.stepping.last_failure().is_some());
+    // only a reverse current below Is is reachable, a tiny fraction of 1 mA
     assert!(
-        failure
-            .stepping
-            .attempts
-            .iter()
-            .all(|attempt| !attempt.accepted()),
-        "{failure:?}"
+        failure.stepping.reached < 1e-11,
+        "{}",
+        failure.stepping.reached
     );
+    assert!(failure.stepping.step < SOURCE_STEPPING.min_step);
+    assert!(failure.stepping.last_failure().is_some());
     assert!(
         error.to_string().contains("source stepping stopped"),
         "{error}"

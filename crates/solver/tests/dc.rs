@@ -146,3 +146,73 @@ fn diode_currents_flow_from_anode_to_cathode() {
     assert!((diode + 1e-15).abs() < 1e-24, "{diode}");
     assert_kcl(&circuit, &solution);
 }
+
+/// series source, diode, and 50 Ω resistor solved by bisection on the junction voltage
+fn series_diode_voltage(volts: f64) -> f64 {
+    let (mut low, mut high) = (0.0, volts);
+    for _ in 0..200 {
+        let vd: f64 = 0.5 * (low + high);
+        if 1e-15 * (vd / 0.025).exp_m1() < (volts - vd) / 50.0 {
+            low = vd;
+        } else {
+            high = vd;
+        }
+    }
+    0.5 * (low + high)
+}
+
+#[test]
+fn the_handout_circuit_needs_no_source_stepping() {
+    let (_, solution) = solve("Vin n1 0 DC 1\nD1 n1 n2\nR n2 0 50");
+
+    assert!(matches!(solution.method(), DcMethod::Newton(_)));
+}
+
+#[test]
+fn source_stepping_reaches_circuits_where_direct_newton_fails() {
+    let (circuit, solution) = solve("Vin n1 0 DC 5\nD1 n1 n2\nR n2 0 50");
+    let DcMethod::SourceStepping { direct, stepping } = solution.method() else {
+        panic!("expected source stepping, found {:?}", solution.method());
+    };
+
+    assert!(direct.to_string().contains("iteration"), "{direct}");
+    let accepted: Vec<_> = stepping.accepted().map(|(scale, _)| scale).collect();
+    assert_eq!(*accepted.last().unwrap(), 1.0);
+    assert!(accepted.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(stepping.attempts[0].from == 0.0);
+
+    let vd = series_diode_voltage(5.0);
+    assert_voltages(&circuit, &solution, &[("n1", 5.0), ("n2", 5.0 - vd)]);
+    assert_kcl(&circuit, &solution);
+
+    // the reported Jacobian belongs to the final, full-strength solve
+    let system = assemble(&circuit).unwrap();
+    let jacobian = &system.g + system.df_dx(solution.unknowns()).unwrap();
+    assert_eq!(solution.jacobian(), Some(&jacobian));
+    assert!(solution.newton_iterations() > stepping.state.iterations.len());
+}
+
+#[test]
+fn unsolvable_circuits_report_where_source_stepping_stopped() {
+    // a diode cannot carry more than Is in reverse, so no operating point exists
+    let error = solve_dc(&circuit("I1 a 0 DC 1e-3\nD1 a 0")).unwrap_err();
+    let DcError::SourceStepping(failure) = &error else {
+        panic!("expected a source-stepping failure, found {error:?}");
+    };
+
+    assert_eq!(failure.stepping.reached, 0.0);
+    assert!(failure.stepping.step < 1e-6);
+    assert!(failure.stepping.last_failure().is_some());
+    assert!(
+        failure
+            .stepping
+            .attempts
+            .iter()
+            .all(|attempt| !attempt.accepted()),
+        "{failure:?}"
+    );
+    assert!(
+        error.to_string().contains("source stepping stopped"),
+        "{error}"
+    );
+}

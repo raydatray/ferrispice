@@ -193,10 +193,70 @@ fn malformed_diode_records_render_source_context() {
 #[test]
 fn solves_a_circuit_containing_a_diode() {
     let stdout = success(&DIODE_CIRCUIT.replace(".end", ".dc\n.end"));
-    assert_results(
-        &stdout,
-        &[("V(n1)", 1.0), ("V(n2)", 0.267314), ("I(Vin)", -0.00534629)],
+    assert!(
+        stdout.lines().any(|line| line == "nonlinear DC analysis"),
+        "{stdout}"
     );
+    assert!(
+        !stdout.lines().any(|line| line == "linear DC analysis"),
+        "{stdout}"
+    );
+    for line in [
+        "V(n1)  = 1 V",
+        "V(n2)  = 0.267314 V",
+        "I(Vin) = -0.00534629 A",
+    ] {
+        assert!(
+            stdout.lines().any(|output| output == line),
+            "{line:?}\n{stdout}"
+        );
+    }
+    let summary = stdout
+        .lines()
+        .find(|line| line.starts_with("converged in "))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    assert!(summary.ends_with(" Newton iterations"), "{summary}");
+    assert!(!stdout.contains("source stepping"), "{stdout}");
+}
+
+#[test]
+fn reports_source_stepping_when_direct_newton_fails() {
+    let stdout = success("Hundred volts\nVin n1 0 DC 100\nD1 n1 n2\nR n2 0 50\n.dc\n.end\n");
+    assert!(
+        stdout.lines().any(|line| line == "nonlinear DC analysis"),
+        "{stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("converged with source stepping: ")
+                && line.contains(" rejected, ")),
+        "{stdout}"
+    );
+    assert_results(&stdout, &[("V(n1)", 100.0), ("V(n2)", 99.1194)]);
+}
+
+#[test]
+fn unsolvable_nonlinear_circuits_fail_with_a_diagnostic() {
+    let input = Input::new("Reverse\nI1 a 0 DC 1e-3\nD1 a 0\n.dc\n.end\n");
+    let output = run(&[input.path.as_os_str()]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("ERROR"), "{stderr}");
+    assert!(
+        stderr.contains("input with spaces.cir: nonlinear DC analysis failed"),
+        "{stderr}"
+    );
+    // miette wraps long causes and help across lines
+    let words = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(words.contains("source stepping stopped"), "{stderr}");
+    assert!(words.contains("Possible causes:"), "{stderr}");
+    assert!(
+        words.contains("current is forced backwards through a diode"),
+        "{stderr}"
+    );
+    assert!(words.contains("not connected to the rest"), "{stderr}");
 }
 
 #[test]

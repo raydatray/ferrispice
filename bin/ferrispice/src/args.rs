@@ -6,8 +6,10 @@ use clap::Parser;
 #[command(
     about = "parse, validate, and assemble a circuit netlist",
     long_about = "parse, validate, and assemble a circuit netlist.\n\n\
-        A .dc record in the netlist requests linear DC analysis and prints the MNA \
-        unknown vector: non-ground node voltages and explicit branch currents.\n\n\
+        A .dc record in the netlist requests DC analysis and prints the MNA \
+        unknown vector: non-ground node voltages and explicit branch currents. \
+        Linear circuits are solved directly; circuits with diodes are solved by \
+        Newton-Raphson, ramping the sources up from zero if needed.\n\n\
         Positive current flows from an element's first terminal to its second."
 )]
 pub(crate) struct Args {

@@ -1,7 +1,7 @@
-use ferrispice_circuit::{CircuitError, ElementErrorKind};
+use ferrispice_circuit::{Circuit, CircuitError, ElementErrorKind};
 use ferrispice_mna::AssemblyError;
 use ferrispice_netlist::{ByteSpan, ParseError, ParseErrorKind};
-use ferrispice_solver::{DcError, SolveError};
+use ferrispice_solver::{DcError, NewtonErrorKind, SolveError, SourceSteppingFailure};
 use miette::{Diagnostic, NamedSource, SourceSpan};
 use thiserror::Error;
 
@@ -28,12 +28,65 @@ struct AnalysisDiagnostic {
     help: Option<&'static str>,
 }
 
-pub(crate) fn analysis(error: DcError, input_name: String, contents: String) -> miette::Report {
+/// Newton failed on the full circuit and source stepping could not reach it
+#[derive(Debug, Error, Diagnostic)]
+#[error("{input_name}: nonlinear DC analysis failed")]
+struct NonlinearDiagnostic {
+    input_name: String,
+    #[source]
+    cause: Box<SourceSteppingFailure>,
+    #[source_code]
+    input: NamedSource<String>,
+    /// the diode whose equation overflowed, when that ended the last attempt
+    #[label("{label}")]
+    span: Option<SourceSpan>,
+    label: String,
+    #[help]
+    help: &'static str,
+}
+
+impl NonlinearDiagnostic {
+    fn new(
+        cause: Box<SourceSteppingFailure>,
+        circuit: &Circuit,
+        input_name: String,
+        contents: String,
+    ) -> Self {
+        let device = match cause.stepping.last_failure().map(|error| &error.kind) {
+            Some(NewtonErrorKind::Device { cause, .. }) => Some(cause),
+            _ => None,
+        };
+
+        Self {
+            // the circuit, not the solver, knows where each element was declared
+            span: device
+                .and_then(|device| circuit.element(device.id))
+                .map(|element| source_span(element.span)),
+            label: device.map_or_else(String::new, |device| device.cause.to_string()),
+            input: NamedSource::new(input_name.clone(), contents),
+            input_name,
+            cause,
+            help: "Newton-Raphson did not converge from x = 0, and ramping every source up \
+                   from zero could not reach full strength. Possible causes:\n\
+                   - current is forced backwards through a diode, which blocks reverse \
+                   current\n\
+                   - part of the circuit is not connected to the rest, so its voltages are \
+                   undetermined",
+        }
+    }
+}
+
+pub(crate) fn analysis(
+    error: DcError,
+    circuit: &Circuit,
+    input_name: String,
+    contents: String,
+) -> miette::Report {
     match error {
         DcError::Assembly(error) => report(error, input_name, contents),
-        DcError::SourceStepping(error) => {
-            miette::miette!("{input_name}: nonlinear DC analysis failed: {error}")
-        }
+        DcError::SourceStepping(cause) => miette::Report::new(NonlinearDiagnostic::new(
+            cause, circuit, input_name, contents,
+        )),
         DcError::Solve(cause) => {
             let help = matches!(cause, SolveError::Singular { .. }).then_some(
                 "the equations do not determine every unknown. floating nodes, \

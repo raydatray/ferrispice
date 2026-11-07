@@ -13,9 +13,14 @@ use crate::{
 };
 
 /// source stepping ramps `λ` from 0 to 1, starting with a step of 0.1
+///
+/// the minimum step is tiny because a diode at `x = 0` conducts only
+/// `Is / Vt`: a current source driving it must be scaled down to roughly
+/// `Is` before the first Newton update stays in range, after which the
+/// doubling steps reach full strength quickly
 pub const SOURCE_STEPPING: StepOptions = StepOptions {
     initial_step: 0.1,
-    min_step: 1e-6,
+    min_step: 1e-15,
     max_step: None,
 };
 

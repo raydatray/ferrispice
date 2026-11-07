@@ -1,11 +1,16 @@
 use std::collections::HashMap;
 
 use ferrispice_circuit::{Circuit, Element, ElementId, ElementKind, NodeId};
-use ferrispice_mna::{AssemblyError, MnaSystem, NonlinearDevice, UnknownLayout, assemble};
-use nalgebra::DVector;
+use ferrispice_mna::{
+    AssemblyError, MnaSystem, UnknownLayout, assemble, diode_current_and_derivative,
+};
+use nalgebra::{DMatrix, DVector};
 use thiserror::Error;
 
-use crate::{SolveError, solve_linear};
+use crate::{
+    NewtonError, NewtonOptions, NewtonProblem, NewtonSolution, SolveError, solve_linear,
+    solve_newton,
+};
 
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum DcError {
@@ -15,11 +20,20 @@ pub enum DcError {
     #[error(transparent)]
     Solve(#[from] SolveError),
 
-    #[error("nonlinear DC analysis is not implemented yet; {element:?} is nonlinear")]
-    Nonlinear { element: String },
+    #[error(transparent)]
+    Newton(#[from] Box<NewtonError>),
 }
 
-/// linear DC operating point, queried by circuit IDs instead of matrix indices
+/// how the DC operating point was found
+#[derive(Clone, Debug, PartialEq)]
+pub enum DcMethod {
+    /// the circuit has no nonlinear devices: one LU solve of `G x = b`
+    Linear,
+    /// Newton-Raphson on the full circuit, starting from `x = 0`
+    Newton(NewtonSolution),
+}
+
+/// DC operating point, queried by circuit IDs instead of matrix indices
 #[derive(Clone, Debug, PartialEq)]
 pub struct DcSolution {
     layout: UnknownLayout,
@@ -28,6 +42,7 @@ pub struct DcSolution {
     element_currents: Vec<(ElementId, f64)>,
     voltage_index: HashMap<NodeId, usize>,
     current_index: HashMap<ElementId, usize>,
+    method: DcMethod,
 }
 
 impl DcSolution {
@@ -63,29 +78,70 @@ impl DcSolution {
     pub fn layout(&self) -> &UnknownLayout {
         &self.layout
     }
-}
 
-/// assemble and solve the DC equations of a circuit.
-pub fn solve_dc(circuit: &Circuit) -> Result<DcSolution, DcError> {
-    let system = assemble(circuit)?;
-
-    // solving `G x = b` alone would silently drop every diode current
-    if let Some(NonlinearDevice::Diode(diode)) = system.nonlinear.first() {
-        return Err(DcError::Nonlinear {
-            element: diode.name.clone(),
-        });
+    pub fn method(&self) -> &DcMethod {
+        &self.method
     }
 
-    solve_steady_state(circuit, &system)
+    /// whether Newton-Raphson was needed because the circuit is nonlinear
+    pub fn is_nonlinear(&self) -> bool {
+        !matches!(self.method, DcMethod::Linear)
+    }
+
+    /// `J = G + ∂f/∂x` at the operating point; `None` for linear circuits
+    pub fn jacobian(&self) -> Option<&DMatrix<f64>> {
+        match &self.method {
+            DcMethod::Linear => None,
+            DcMethod::Newton(solution) => Some(&solution.jacobian),
+        }
+    }
+
+    /// Newton iterations performed; zero for linear circuits
+    pub fn newton_iterations(&self) -> usize {
+        match &self.method {
+            DcMethod::Linear => 0,
+            DcMethod::Newton(solution) => solution.iterations.len(),
+        }
+    }
 }
 
-/// solve the DC steady-state system `G x = b` already assembled from `circuit`
+/// assemble and solve the DC equations `G x + f(x) = b` of a circuit
 ///
-/// time derivatives are zero at DC, so `C` does not participate
-fn solve_steady_state(circuit: &Circuit, system: &MnaSystem) -> Result<DcSolution, DcError> {
+/// time derivatives are zero at DC, so `C` does not participate. Linear
+/// circuits are solved directly; nonlinear circuits use Newton-Raphson.
+pub fn solve_dc(circuit: &Circuit) -> Result<DcSolution, DcError> {
+    let system = assemble(circuit)?;
     let _span = tracing::debug_span!("solve_dc", unknowns = system.layout.len()).entered();
 
-    let unknowns = solve_linear(&system.g, &system.b)?;
+    let (unknowns, method) = if system.is_linear() {
+        (solve_linear(&system.g, &system.b)?, DcMethod::Linear)
+    } else {
+        let solution = solve_nonlinear(&system)?;
+        (solution.x.clone(), DcMethod::Newton(solution))
+    };
+
+    Ok(interpret(circuit, &system, unknowns, method))
+}
+
+fn solve_nonlinear(system: &MnaSystem) -> Result<NewtonSolution, DcError> {
+    let problem = NewtonProblem {
+        system,
+        a: &system.g,
+        r: &system.b,
+    };
+    let initial = DVector::zeros(system.layout.len());
+
+    solve_newton(&problem, &initial, &NewtonOptions::default())
+        .map_err(|error| DcError::Newton(Box::new(error)))
+}
+
+/// map solved unknowns to node voltages and element currents
+fn interpret(
+    circuit: &Circuit,
+    system: &MnaSystem,
+    unknowns: DVector<f64>,
+    method: DcMethod,
+) -> DcSolution {
     let layout = &system.layout;
 
     let node_voltages: Vec<_> = circuit
@@ -116,14 +172,15 @@ fn solve_steady_state(circuit: &Circuit, system: &MnaSystem) -> Result<DcSolutio
 
     tracing::debug!(nodes = node_voltages.len(), "solved DC operating point");
 
-    Ok(DcSolution {
+    DcSolution {
         voltage_index,
         current_index,
         layout: layout.clone(),
         unknowns,
         node_voltages,
         element_currents,
-    })
+        method,
+    }
 }
 
 fn element_current(element: &Element, layout: &UnknownLayout, unknowns: &DVector<f64>) -> f64 {
@@ -149,7 +206,17 @@ fn element_current(element: &Element, layout: &UnknownLayout, unknowns: &DVector
         | ElementKind::VoltageSource { .. }
         | ElementKind::Vcvs { .. }
         | ElementKind::Ccvs { .. } => branch_current(element.id, layout, unknowns),
-        ElementKind::Diode { .. } => unreachable!("solve_dc rejects nonlinear circuits"),
+        ElementKind::Diode {
+            saturation_current,
+            thermal_voltage,
+        } => {
+            let voltage = node_voltage(element.positive, layout, unknowns)
+                - node_voltage(element.negative, layout, unknowns);
+            // Newton evaluated every diode at the converged unknowns
+            diode_current_and_derivative(saturation_current, thermal_voltage, voltage)
+                .expect("diode current is finite at a converged operating point")
+                .current
+        }
     }
 }
 

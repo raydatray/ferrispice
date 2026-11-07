@@ -1,9 +1,11 @@
 mod common;
 
-use common::{assert_close, assert_currents, assert_voltages, circuit, solve};
+use common::{
+    assert_close, assert_currents, assert_kcl, assert_voltages, circuit, current, solve, voltage,
+};
 use ferrispice_circuit::GROUND;
 use ferrispice_mna::assemble;
-use ferrispice_solver::{DcError, SolveError, solve_dc};
+use ferrispice_solver::{DcError, DcMethod, SolveError, solve_dc};
 
 #[test]
 fn divider_produces_the_hand_calculated_operating_point() {
@@ -93,4 +95,54 @@ fn empty_circuit_solves_to_ground_only() {
     assert_eq!(solution.node_voltages(), &[(GROUND, 0.0)]);
     assert!(solution.element_currents().is_empty());
     assert_eq!(circuit.elements().len(), 0);
+}
+
+#[test]
+fn linear_circuits_use_one_direct_solve() {
+    let (_, solution) = solve("Vin n1 0 DC 6\nR1 n1 n2 100\nR2 n2 0 50");
+
+    assert_eq!(solution.method(), &DcMethod::Linear);
+    assert!(!solution.is_nonlinear());
+    assert_eq!(solution.jacobian(), None);
+    assert_eq!(solution.newton_iterations(), 0);
+}
+
+#[test]
+fn nonlinear_circuits_converge_through_newton_from_zero() {
+    let (circuit, solution) = solve("Vin n1 0 DC 1\nD1 n1 n2\nR n2 0 50");
+    let DcMethod::Newton(newton) = solution.method() else {
+        panic!("expected Newton, found {:?}", solution.method());
+    };
+
+    assert!(solution.is_nonlinear());
+    assert_eq!(solution.newton_iterations(), newton.iterations.len());
+    assert!(newton.iterations.len() > 1);
+    assert_eq!(solution.unknowns(), &newton.x);
+
+    let system = assemble(&circuit).unwrap();
+    let jacobian = &system.g + system.df_dx(solution.unknowns()).unwrap();
+    assert_eq!(solution.jacobian(), Some(&jacobian));
+
+    let residual =
+        &system.g * solution.unknowns() + system.f(solution.unknowns()).unwrap() - &system.b;
+    assert!(residual.amax() < 1e-12, "{residual}");
+}
+
+#[test]
+fn diode_currents_flow_from_anode_to_cathode() {
+    let (circuit, solution) = solve("Vin n1 0 DC 1\nD1 n1 n2\nR n2 0 50");
+    let v2 = voltage(&circuit, &solution, "n2");
+    let diode = current(&circuit, &solution, "D1");
+
+    assert!(diode > 0.0);
+    assert_close(diode, v2 / 50.0);
+    assert_close(diode, 1e-15 * ((1.0 - v2) / 0.025).exp_m1());
+    assert_currents(&circuit, &solution, &[("Vin", -diode), ("R", diode)]);
+    assert_kcl(&circuit, &solution);
+
+    // reversing the diode blocks all but its saturation current
+    let (circuit, solution) = solve("Vin n1 0 DC 1\nD1 n2 n1\nR n2 0 50");
+    let diode = current(&circuit, &solution, "D1");
+    assert!((diode + 1e-15).abs() < 1e-24, "{diode}");
+    assert_kcl(&circuit, &solution);
 }

@@ -31,7 +31,9 @@ struct AnalysisDiagnostic {
 pub(crate) fn analysis(error: DcError, input_name: String, contents: String) -> miette::Report {
     match error {
         DcError::Assembly(error) => report(error, input_name, contents),
-        DcError::Nonlinear { .. } => miette::miette!("{input_name}: {error}"),
+        DcError::Newton(error) => {
+            miette::miette!("{input_name}: nonlinear DC analysis failed: {error}")
+        }
         DcError::Solve(cause) => {
             let help = matches!(cause, SolveError::Singular { .. }).then_some(
                 "the equations do not determine every unknown. floating nodes, \

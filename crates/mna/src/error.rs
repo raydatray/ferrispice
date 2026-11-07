@@ -2,6 +2,8 @@ use ferrispice_circuit::{Element, ElementId};
 use ferrispice_netlist::{ByteSpan, NetlistPosition};
 use thiserror::Error;
 
+use crate::NonFiniteDiode;
+
 #[derive(Clone, Debug, Error, PartialEq)]
 #[error("{location}: element {element:?}: {kind}")]
 pub struct AssemblyError {
@@ -20,6 +22,16 @@ impl AssemblyError {
             kind,
         }
     }
+}
+
+/// a nonlinear device could not be evaluated at the requested unknowns
+#[derive(Clone, Debug, Error, PartialEq)]
+#[error("element {element:?}: {cause}")]
+pub struct DeviceError {
+    /// the device in the circuit, which owns its source location
+    pub id: ElementId,
+    pub element: String,
+    pub cause: NonFiniteDiode,
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]

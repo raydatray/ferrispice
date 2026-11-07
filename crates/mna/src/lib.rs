@@ -3,13 +3,15 @@ mod error;
 mod layout;
 mod stamps;
 
-use ferrispice_circuit::{Circuit, ElementKind};
+use ferrispice_circuit::{Circuit, ElementId, ElementKind};
 use nalgebra::{DMatrix, DVector};
 
 pub use builder::MatrixBuilder;
-pub use error::{AssemblyError, AssemblyErrorKind};
+pub use error::{AssemblyError, AssemblyErrorKind, DeviceError};
 pub use layout::{Unknown, UnknownKind, UnknownLayout};
-pub use stamps::diode::{DiodeOperatingPoint, DiodeStamp, NonFiniteDiode, diode_operating_point};
+pub use stamps::diode::{
+    DiodeCurrentAndDerivative, DiodeStamp, NonFiniteDiode, diode_current_and_derivative,
+};
 
 /// the circuit equation `G x + C dx/dt + f(x) = b`
 ///
@@ -32,10 +34,118 @@ pub enum NonlinearDevice {
     Diode(DiodeStamp),
 }
 
+/// one signed device current in a row of `f(x)`
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FTerm {
+    pub element: ElementId,
+    pub name: String,
+    /// `+` for current leaving the row's node, `-` for current entering it
+    pub sign: TermSign,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TermSign {
+    Positive,
+    Negative,
+}
+
 impl MnaSystem {
     /// whether `f(x)` is identically zero, so `G x = b` describes DC exactly
     pub fn is_linear(&self) -> bool {
         self.nonlinear.is_empty()
+    }
+
+    /// nonlinear device currents leaving each node at `x`
+    ///
+    /// `x` must have one entry per unknown in `layout`
+    pub fn f(&self, x: &DVector<f64>) -> Result<DVector<f64>, DeviceError> {
+        let mut f = DVector::zeros(self.layout.len());
+
+        for device in &self.nonlinear {
+            match device {
+                NonlinearDevice::Diode(diode) => {
+                    let value = diode.current_and_derivative(x)?;
+                    add_entry(&mut f, diode.anode, value.current);
+                    add_entry(&mut f, diode.cathode, -value.current);
+                }
+            }
+        }
+
+        Ok(f)
+    }
+
+    /// Jacobian `∂f/∂x` at `x`, from each device's analytic derivative
+    ///
+    /// a diode adds its derivative `d id / d vd` in the same four-entry
+    /// pattern as a resistor
+    pub fn df_dx(&self, x: &DVector<f64>) -> Result<DMatrix<f64>, DeviceError> {
+        let size = self.layout.len();
+        let mut jacobian = DMatrix::zeros(size, size);
+
+        for device in &self.nonlinear {
+            match device {
+                NonlinearDevice::Diode(diode) => {
+                    let derivative = diode.current_and_derivative(x)?.derivative;
+                    let (anode, cathode) = (diode.anode, diode.cathode);
+                    add_matrix_entry(&mut jacobian, anode, anode, derivative);
+                    add_matrix_entry(&mut jacobian, anode, cathode, -derivative);
+                    add_matrix_entry(&mut jacobian, cathode, anode, -derivative);
+                    add_matrix_entry(&mut jacobian, cathode, cathode, derivative);
+                }
+            }
+        }
+
+        Ok(jacobian)
+    }
+
+    /// the device terms in each row of `f(x)`, for inspection
+    ///
+    /// rows follow `layout`; branch rows and rows without devices are empty,
+    /// and a diode whose terminals share a node contributes nothing
+    pub fn describe_f(&self) -> Vec<Vec<FTerm>> {
+        let mut rows = vec![Vec::new(); self.layout.len()];
+
+        for device in &self.nonlinear {
+            match device {
+                NonlinearDevice::Diode(diode) => {
+                    if diode.anode == diode.cathode {
+                        continue;
+                    }
+
+                    for (index, sign) in [
+                        (diode.anode, TermSign::Positive),
+                        (diode.cathode, TermSign::Negative),
+                    ] {
+                        if let Some(index) = index {
+                            rows[index].push(FTerm {
+                                element: diode.element,
+                                name: diode.name.clone(),
+                                sign,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        rows
+    }
+}
+
+fn add_entry(vector: &mut DVector<f64>, row: Option<usize>, value: f64) {
+    if let Some(row) = row {
+        vector[row] += value;
+    }
+}
+
+fn add_matrix_entry(
+    matrix: &mut DMatrix<f64>,
+    row: Option<usize>,
+    column: Option<usize>,
+    value: f64,
+) {
+    if let (Some(row), Some(column)) = (row, column) {
+        matrix[(row, column)] += value;
     }
 }
 

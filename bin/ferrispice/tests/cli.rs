@@ -191,17 +191,17 @@ fn malformed_diode_records_render_source_context() {
 }
 
 #[test]
-fn diode_analysis_reports_the_unimplemented_stamp() {
+fn diode_analysis_reports_the_unimplemented_nonlinear_solve() {
     let input = Input::new(&DIODE_CIRCUIT.replace(".end", ".dc\n.end"));
     let output = run(&[input.path.as_os_str()]);
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("diode stamps are not implemented yet"),
+        stderr.contains("nonlinear DC analysis is not implemented yet"),
         "{stderr}"
     );
-    assert!(stderr.contains("D1 n1 n2"), "{stderr}");
+    assert!(stderr.contains("\"D1\""), "{stderr}");
 }
 
 #[test]

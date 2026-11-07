@@ -1,4 +1,44 @@
+use ferrispice_circuit::{Element, ElementId};
 use thiserror::Error;
+
+use crate::{MatrixBuilder, NonlinearDevice};
+
+/// a diode's contribution to `f(x)`, with terminals resolved to matrix indices
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiodeStamp {
+    /// the diode in the circuit, which owns its source location
+    pub element: ElementId,
+    /// element name, for labels and error messages
+    pub name: String,
+    /// matrix index of the anode voltage; `None` for ground
+    pub anode: Option<usize>,
+    /// matrix index of the cathode voltage; `None` for ground
+    pub cathode: Option<usize>,
+    /// `Is`, in amperes
+    pub saturation_current: f64,
+    /// `Vt`, in volts
+    pub thermal_voltage: f64,
+}
+
+/// record the diode for `f(x)`; it adds nothing to `G`, `C`, or `b`
+pub(crate) fn diode(
+    builder: &mut MatrixBuilder,
+    element: &Element,
+    saturation_current: f64,
+    thermal_voltage: f64,
+) {
+    let anode = builder.node_index(element.positive);
+    let cathode = builder.node_index(element.negative);
+
+    builder.add_nonlinear(NonlinearDevice::Diode(DiodeStamp {
+        element: element.id,
+        name: element.name.clone(),
+        anode,
+        cathode,
+        saturation_current,
+        thermal_voltage,
+    }));
+}
 
 /// diode current and its derivative at one junction voltage
 #[derive(Clone, Copy, Debug, PartialEq)]

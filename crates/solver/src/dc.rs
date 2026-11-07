@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ferrispice_circuit::{Circuit, Element, ElementId, ElementKind, NodeId};
-use ferrispice_mna::{AssemblyError, MnaSystem, UnknownLayout, assemble};
+use ferrispice_mna::{AssemblyError, MnaSystem, NonlinearDevice, UnknownLayout, assemble};
 use nalgebra::DVector;
 use thiserror::Error;
 
@@ -14,6 +14,9 @@ pub enum DcError {
 
     #[error(transparent)]
     Solve(#[from] SolveError),
+
+    #[error("nonlinear DC analysis is not implemented yet; {element:?} is nonlinear")]
+    Nonlinear { element: String },
 }
 
 /// linear DC operating point, queried by circuit IDs instead of matrix indices
@@ -65,6 +68,14 @@ impl DcSolution {
 /// assemble and solve the DC equations of a circuit.
 pub fn solve_dc(circuit: &Circuit) -> Result<DcSolution, DcError> {
     let system = assemble(circuit)?;
+
+    // solving `G x = b` alone would silently drop every diode current
+    if let Some(NonlinearDevice::Diode(diode)) = system.nonlinear.first() {
+        return Err(DcError::Nonlinear {
+            element: diode.name.clone(),
+        });
+    }
+
     solve_steady_state(circuit, &system)
 }
 
@@ -138,7 +149,7 @@ fn element_current(element: &Element, layout: &UnknownLayout, unknowns: &DVector
         | ElementKind::VoltageSource { .. }
         | ElementKind::Vcvs { .. }
         | ElementKind::Ccvs { .. } => branch_current(element.id, layout, unknowns),
-        ElementKind::Diode { .. } => unreachable!("assembly rejects diodes"),
+        ElementKind::Diode { .. } => unreachable!("solve_dc rejects nonlinear circuits"),
     }
 }
 

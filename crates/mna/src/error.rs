@@ -26,7 +26,4 @@ impl AssemblyError {
 pub enum AssemblyErrorKind {
     #[error("element {branch:?} has no allocated branch-current unknown")]
     MissingBranchCurrent { branch: ElementId },
-
-    #[error("{kind} stamps are not implemented yet")]
-    UnsupportedElement { kind: &'static str },
 }

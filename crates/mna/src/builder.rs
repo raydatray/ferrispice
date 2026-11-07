@@ -1,7 +1,7 @@
 use ferrispice_circuit::{Element, ElementId, NodeId};
 use nalgebra::{DMatrix, DVector};
 
-use crate::{AssemblyError, AssemblyErrorKind, MnaSystem, UnknownLayout};
+use crate::{AssemblyError, AssemblyErrorKind, MnaSystem, NonlinearDevice, UnknownLayout};
 
 /// accumulates element contributions into the MNA matrics
 /// `None` represents ground, whose matrix entries are skipped
@@ -20,6 +20,7 @@ impl MatrixBuilder {
                 c: DMatrix::zeros(size, size),
                 b: DVector::zeros(size),
                 layout,
+                nonlinear: Vec::new(),
             },
         }
     }
@@ -94,6 +95,11 @@ impl MatrixBuilder {
         self.add_g(negative, Some(branch), -1.0);
         self.add_g(Some(branch), positive, 1.0);
         self.add_g(Some(branch), negative, -1.0);
+    }
+
+    /// record a device whose current depends nonlinearly on `x`
+    pub fn add_nonlinear(&mut self, device: NonlinearDevice) {
+        self.system.nonlinear.push(device);
     }
 
     pub fn finish(self) -> MnaSystem {

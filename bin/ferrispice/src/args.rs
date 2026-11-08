@@ -17,11 +17,12 @@ pub(crate) struct Args {
     #[arg(value_name = "netlist")]
     pub path: PathBuf,
 
-    /// print the MNA matrices G, C, b and unknown ordering
+    /// print the MNA matrices G, C, b, the nonlinear vector f(x), and unknown ordering
     #[arg(long)]
     pub dump_mna: bool,
 
-    /// print the LU factors L, U and row-permutation matrix P for G
+    /// print the LU factors L, U and row-permutation matrix P for G, or for the
+    /// Jacobian J at the operating point of a nonlinear circuit
     #[arg(long)]
     pub dump_lu: bool,
 

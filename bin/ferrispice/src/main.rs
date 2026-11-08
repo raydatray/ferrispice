@@ -48,8 +48,13 @@ fn run(args: args::Args) -> miette::Result<()> {
             output::print_mna(&circuit, &system)?;
         }
 
+        // a nonlinear circuit's Jacobian is factored once the solve converges
         if args.dump_lu {
-            output::print_lu(&circuit, &system)?;
+            if system.is_linear() {
+                output::print_lu(&circuit, &system)?;
+            } else if !requests_dc {
+                output::print_no_jacobian("no analysis was requested")?;
+            }
         }
 
         Some(system)
@@ -72,6 +77,9 @@ fn run(args: args::Args) -> miette::Result<()> {
             {
                 output::print_failed_trace(&circuit, failure)?;
             }
+            if args.dump_lu && system.as_ref().is_some_and(|system| !system.is_linear()) {
+                output::print_no_jacobian("the nonlinear solve did not converge")?;
+            }
             return Err(diagnostics::analysis(error, &circuit, input_name, text));
         }
     };
@@ -80,8 +88,13 @@ fn run(args: args::Args) -> miette::Result<()> {
         output::print_trace(&circuit, &solution)?;
     }
 
-    if let Some(system) = system.as_ref().filter(|_| args.dump_mna) {
-        output::print_f_at_solution(&circuit, system, &solution)?;
+    if let Some(system) = &system {
+        if args.dump_mna {
+            output::print_f_at_solution(&circuit, system, &solution)?;
+        }
+        if args.dump_lu && !system.is_linear() {
+            output::print_jacobian_lu(&circuit, system, &solution)?;
+        }
     }
 
     output::print_solution(&circuit, &solution)?;

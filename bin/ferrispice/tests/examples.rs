@@ -79,8 +79,13 @@ fn results(stdout: &str) -> HashMap<String, f64> {
         .lines()
         .filter_map(|line| {
             let (label, value) = line.split_once('=')?;
+            let label = label.trim();
+            // results are entries of x; `id(D1) = ...` lines describe f(x)
+            if !(label.starts_with("V(") || label.starts_with("I(")) {
+                return None;
+            }
             let value = value.split_whitespace().next()?.parse().ok()?;
-            Some((label.trim().to_owned(), value))
+            Some((label.to_owned(), value))
         })
         .collect()
 }

@@ -58,10 +58,12 @@ pub enum NonlinearDevice {
 }
 
 pub struct DiodeStamp {
-    pub element: ElementId,     // labels for inspection and errors
+    pub element: ElementId,     // the circuit owns its source location
+    pub name: String,           // labels and error messages
     pub anode: Option<usize>,   // matrix index; None for ground
     pub cathode: Option<usize>,
-    pub model: DiodeModel,
+    pub saturation_current: f64,
+    pub thermal_voltage: f64,
 }
 
 pub struct MnaSystem {

@@ -8,8 +8,15 @@ use nalgebra::{DMatrix, DVector};
 use thiserror::Error;
 
 use crate::{
-    NewtonError, NewtonOptions, NewtonProblem, NewtonSolution, SolveError, solve_linear,
-    solve_newton,
+    NewtonError, NewtonOptions, NewtonProblem, NewtonSolution, SolveError, StepOptions,
+    SteppingError, SteppingOutcome, advance, solve_linear, solve_newton,
+};
+
+/// source stepping ramps `λ` from 0 to 1, starting with a step of 0.1
+pub const SOURCE_STEPPING: StepOptions = StepOptions {
+    initial_step: 0.1,
+    min_step: 1e-6,
+    max_step: None,
 };
 
 #[derive(Clone, Debug, Error, PartialEq)]
@@ -21,7 +28,22 @@ pub enum DcError {
     Solve(#[from] SolveError),
 
     #[error(transparent)]
-    Newton(#[from] Box<NewtonError>),
+    SourceStepping(#[from] Box<SourceSteppingFailure>),
+}
+
+/// Newton failed on the full circuit, and ramping the sources did not reach it
+#[derive(Clone, Debug, Error, PartialEq)]
+#[error(
+    "Newton-Raphson failed on the full circuit, and source stepping stopped at {:.6}% of the \
+     source values: {}",
+    100.0 * stepping.reached,
+    stepping.last_failure().map_or_else(|| direct.to_string(), ToString::to_string)
+)]
+pub struct SourceSteppingFailure {
+    /// failure of the first attempt, Newton on the full circuit
+    pub direct: NewtonError,
+    /// every source-stepping attempt; the last one is the final failure
+    pub stepping: SteppingError<NewtonSolution, NewtonError>,
 }
 
 /// how the DC operating point was found
@@ -31,6 +53,22 @@ pub enum DcMethod {
     Linear,
     /// Newton-Raphson on the full circuit, starting from `x = 0`
     Newton(NewtonSolution),
+    /// Newton on the full circuit failed, so the sources were ramped up:
+    /// each attempt solves `G x + f(x) = λ b` from the last accepted `λ`
+    SourceStepping {
+        direct: NewtonError,
+        stepping: SteppingOutcome<NewtonSolution, NewtonError>,
+    },
+}
+
+impl DcMethod {
+    fn final_newton(&self) -> Option<&NewtonSolution> {
+        match self {
+            Self::Linear => None,
+            Self::Newton(solution) => Some(solution),
+            Self::SourceStepping { stepping, .. } => Some(&stepping.state),
+        }
+    }
 }
 
 /// DC operating point, queried by circuit IDs instead of matrix indices
@@ -90,17 +128,27 @@ impl DcSolution {
 
     /// `J = G + ∂f/∂x` at the operating point; `None` for linear circuits
     pub fn jacobian(&self) -> Option<&DMatrix<f64>> {
-        match &self.method {
-            DcMethod::Linear => None,
-            DcMethod::Newton(solution) => Some(&solution.jacobian),
-        }
+        self.method
+            .final_newton()
+            .map(|solution| &solution.jacobian)
     }
 
-    /// Newton iterations performed; zero for linear circuits
+    /// Newton iterations performed across every attempt; zero for linear circuits
     pub fn newton_iterations(&self) -> usize {
         match &self.method {
             DcMethod::Linear => 0,
             DcMethod::Newton(solution) => solution.iterations.len(),
+            DcMethod::SourceStepping { direct, stepping } => {
+                direct.iterations.len()
+                    + stepping
+                        .attempts
+                        .iter()
+                        .map(|attempt| match &attempt.outcome {
+                            Ok(solution) => solution.iterations.len(),
+                            Err(error) => error.iterations.len(),
+                        })
+                        .sum::<usize>()
+            }
         }
     }
 }
@@ -113,26 +161,60 @@ pub fn solve_dc(circuit: &Circuit) -> Result<DcSolution, DcError> {
     let system = assemble(circuit)?;
     let _span = tracing::debug_span!("solve_dc", unknowns = system.layout.len()).entered();
 
-    let (unknowns, method) = if system.is_linear() {
-        (solve_linear(&system.g, &system.b)?, DcMethod::Linear)
-    } else {
-        let solution = solve_nonlinear(&system)?;
-        (solution.x.clone(), DcMethod::Newton(solution))
-    };
+    if system.is_linear() {
+        let x = solve_linear(&system.g, &system.b)?;
+        return Ok(interpret(circuit, &system, x, DcMethod::Linear));
+    }
 
-    Ok(interpret(circuit, &system, unknowns, method))
+    let method = solve_nonlinear(&system)?;
+    let x = method
+        .final_newton()
+        .expect("nonlinear methods end with a Newton solution")
+        .x
+        .clone();
+
+    Ok(interpret(circuit, &system, x, method))
 }
 
-fn solve_nonlinear(system: &MnaSystem) -> Result<NewtonSolution, DcError> {
-    let problem = NewtonProblem {
-        system,
-        a: &system.g,
-        r: &system.b,
-    };
-    let initial = DVector::zeros(system.layout.len());
+/// Newton on the full circuit, then source stepping if that fails
+fn solve_nonlinear(system: &MnaSystem) -> Result<DcMethod, DcError> {
+    let options = NewtonOptions::default();
+    let zero = DVector::zeros(system.layout.len());
 
-    solve_newton(&problem, &initial, &NewtonOptions::default())
-        .map_err(|error| DcError::Newton(Box::new(error)))
+    // sources scaled by λ appear only in `b`, so the right-hand side is `λ b`
+    let solve_at = |scale: f64, initial: &DVector<f64>| {
+        let r = &system.b * scale;
+        let problem = NewtonProblem {
+            system,
+            a: &system.g,
+            r: &r,
+        };
+        solve_newton(&problem, initial, &options)
+    };
+
+    let direct = match solve_at(1.0, &zero) {
+        Ok(solution) => return Ok(DcMethod::Newton(solution)),
+        Err(error) => error,
+    };
+
+    tracing::debug!(%direct, "direct Newton failed; stepping the sources");
+
+    // with every source off, `x = 0` solves `G x + f(x) = 0` exactly
+    let off = NewtonSolution {
+        x: zero.clone(),
+        iterations: Vec::new(),
+        jacobian: system.g.clone(),
+    };
+
+    match advance(0.0, 1.0, off, &SOURCE_STEPPING, |_, to, state| {
+        solve_at(to, &state.x)
+    }) {
+        Ok(stepping) => Ok(DcMethod::SourceStepping { direct, stepping }),
+        Err(stepping) => Err(DcError::SourceStepping(Box::new(SourceSteppingFailure {
+            direct,
+            stepping,
+        }))),
+    }
 }
 
 /// map solved unknowns to node voltages and element currents

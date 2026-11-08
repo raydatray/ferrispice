@@ -37,7 +37,7 @@ fn run(args: args::Args) -> miette::Result<()> {
 
     // repeated `.dc` records request the same single analysis
     let requests_dc = parsed.requests_dc();
-    if args.dump_mna || args.dump_lu {
+    let system = if args.dump_mna || args.dump_lu {
         let system = match ferrispice_mna::assemble(&circuit) {
             Ok(system) => system,
             Err(error) => return Err(diagnostics::report(error, input_name, text)),
@@ -51,7 +51,11 @@ fn run(args: args::Args) -> miette::Result<()> {
         if args.dump_lu {
             output::print_lu(&circuit, &system)?;
         }
-    }
+
+        Some(system)
+    } else {
+        None
+    };
 
     if !requests_dc {
         // the summary needs only the unknown layout, not the stamped matrices
@@ -63,6 +67,10 @@ fn run(args: args::Args) -> miette::Result<()> {
         Ok(solution) => solution,
         Err(error) => return Err(diagnostics::analysis(error, &circuit, input_name, text)),
     };
+
+    if let Some(system) = system.as_ref().filter(|_| args.dump_mna) {
+        output::print_f_at_solution(&circuit, system, &solution)?;
+    }
 
     output::print_solution(&circuit, &solution)?;
 

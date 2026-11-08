@@ -80,8 +80,13 @@ fn results(stdout: &str) -> HashMap<String, f64> {
         .lines()
         .filter_map(|line| {
             let (label, value) = line.split_once('=')?;
+            let label = label.trim();
+            // results are entries of x; `id(D1) = ...` lines describe f(x)
+            if !(label.starts_with("V(") || label.starts_with("I(")) {
+                return None;
+            }
             let value = value.split_whitespace().next()?.parse().ok()?;
-            Some((label.trim().to_owned(), value))
+            Some((label.to_owned(), value))
         })
         .collect()
 }
@@ -374,6 +379,92 @@ fn matrices_remain_visible_when_the_solve_fails() {
             .unwrap()
             .contains("singular")
     );
+}
+
+/// rows of the symbolic `f(x)` section as `(row label, terms)`
+fn f_rows(stdout: &str) -> Vec<(String, String)> {
+    stdout
+        .lines()
+        .skip_while(|line| *line != "f(x):")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .map(|line| {
+            let (label, terms) = line.split_once("  ").unwrap();
+            (label.trim().to_owned(), terms.trim().to_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn dumped_mna_shows_f_symbolically_and_at_the_solution() {
+    let output =
+        dump_mna("* diode circuit\nVin n1 0 DC 1\nD1 n1 n2\nR n2 0 50\nD2 0 n2\n.dc\n.end\n");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+
+    assert!(stdout.contains("G x + C dx/dt + f(x) = b"), "{stdout}");
+    assert_eq!(
+        f_rows(&stdout),
+        [
+            ("KCL n1".to_owned(), "+id(D1)".to_owned()),
+            ("KCL n2".to_owned(), "-id(D1) -id(D2)".to_owned()),
+            ("branch Vin".to_owned(), "0".to_owned()),
+        ]
+    );
+    for line in [
+        "id(D1) = 1e-15 * (exp((V(n1) - V(n2)) / 0.025) - 1)",
+        "id(D2) = 1e-15 * (exp((-V(n2)) / 0.025) - 1)",
+    ] {
+        assert!(
+            stdout.lines().any(|output| output == line),
+            "{line}\n{stdout}"
+        );
+    }
+
+    // G holds only the linear stamps; f appears between C and b
+    assert_eq!(
+        matrix(&stdout, "G", 3),
+        [
+            ("KCL n1".to_owned(), vec![0.0, 0.0, 1.0]),
+            ("KCL n2".to_owned(), vec![0.0, 0.02, 0.0]),
+            ("branch Vin".to_owned(), vec![1.0, 0.0, 0.0]),
+        ]
+    );
+    let position = |text: &str| stdout.find(text).unwrap();
+    assert!(position("C:") < position("f(x):") && position("f(x):") < position("b:"));
+
+    // after solving, f is evaluated at the operating point before the results
+    let f: Vec<_> = matrix(&stdout, "f(x*)", 1)
+        .into_iter()
+        .map(|(_, row)| row[0])
+        .collect();
+    assert_eq!(f.len(), 3, "{stdout}");
+    assert!((f[0] - 0.00534629).abs() < 1e-8, "{stdout}");
+    assert!((f[1] + 0.00534629).abs() < 1e-8, "{stdout}");
+    assert_eq!(f[2], 0.0);
+    assert!(position("f(x*):") < position("nonlinear DC analysis"));
+}
+
+#[test]
+fn linear_circuits_dump_a_zero_f() {
+    let output = dump_mna(DIVIDER);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    assert!(stdout.lines().any(|line| line == "f(x) = 0"), "{stdout}");
+    assert!(!stdout.contains("f(x*)"), "{stdout}");
+}
+
+#[test]
+fn symbolic_f_remains_visible_when_the_solve_fails() {
+    let output = dump_mna("Reverse\nI1 a 0 DC 1e-3\nD1 a 0\n.dc\n.end\n");
+    assert!(!output.status.success());
+    let stdout = output_text(output.stdout);
+    assert_eq!(
+        f_rows(&stdout),
+        [("KCL a".to_owned(), "+id(D1)".to_owned())]
+    );
+    assert!(!stdout.contains("f(x*)"), "{stdout}");
+    assert!(results(&stdout).is_empty(), "{stdout}");
 }
 
 fn dump_lu(text: &str) -> Output {

@@ -1,6 +1,6 @@
 use boxen::{BorderStyle, TextAlignment, text::text_width};
 use ferrispice_circuit::{Circuit, ElementKind};
-use ferrispice_mna::{MnaSystem, UnknownKind, UnknownLayout};
+use ferrispice_mna::{MnaSystem, NonlinearDevice, TermSign, UnknownKind, UnknownLayout};
 use ferrispice_solver::{DcMethod, DcSolution};
 use miette::{IntoDiagnostic, WrapErr};
 use nalgebra::{DMatrix, DVector};
@@ -85,7 +85,7 @@ fn convergence_summary(solution: &DcSolution) -> String {
     }
 }
 
-/// `G x + C dx/dt = b`, with rows labeled as KCL or branch equations.
+/// `G x + C dx/dt + f(x) = b`, with rows labeled as KCL or branch equations.
 pub(crate) fn print_mna(circuit: &Circuit, system: &MnaSystem) -> miette::Result<()> {
     let columns: Vec<_> = system.layout.labels().map(str::to_owned).collect();
 
@@ -102,15 +102,99 @@ pub(crate) fn print_mna(circuit: &Circuit, system: &MnaSystem) -> miette::Result
 
     let b = DMatrix::from_column_slice(system.b.len(), 1, system.b.as_slice());
     let body = [
-        "G x + C dx/dt = b".to_owned(),
+        "G x + C dx/dt + f(x) = b".to_owned(),
         unknowns.join("\n"),
         format_matrix("G", &system.g, &rows, &columns),
         format_matrix("C", &system.c, &rows, &columns),
+        format_f(system, &rows),
         format_matrix("b", &b, &rows, &["b".to_owned()]),
     ]
     .join("\n\n");
 
     print_panel("MNA system", &body)
+}
+
+/// `f(x)` evaluated at the solved operating point; nothing for linear circuits
+pub(crate) fn print_f_at_solution(
+    circuit: &Circuit,
+    system: &MnaSystem,
+    solution: &DcSolution,
+) -> miette::Result<()> {
+    if system.is_linear() {
+        return Ok(());
+    }
+
+    let f = system
+        .f(solution.unknowns())
+        .into_diagnostic()
+        .wrap_err("could not evaluate f(x) at the operating point")?;
+    let f = DMatrix::from_column_slice(f.len(), 1, f.as_slice());
+    let rows = equation_labels(circuit, system);
+
+    print_panel(
+        "f(x) at the operating point",
+        &format_matrix("f(x*)", &f, &rows, &["f(x*)".to_owned()]),
+    )
+}
+
+/// `f(x)` symbolically: the signed device currents in each row, then each
+/// device's equation in terms of the unknowns
+fn format_f(system: &MnaSystem, rows: &[String]) -> String {
+    if system.is_linear() {
+        return "f(x) = 0".to_owned();
+    }
+
+    let terms: Vec<String> = system
+        .describe_f()
+        .iter()
+        .map(|row| {
+            if row.is_empty() {
+                return "0".to_owned();
+            }
+            row.iter()
+                .map(|term| {
+                    let sign = match term.sign {
+                        TermSign::Positive => '+',
+                        TermSign::Negative => '-',
+                    };
+                    format!("{sign}id({})", term.name)
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+
+    let row_width = width(rows);
+    let mut output = "f(x):".to_owned();
+    for (label, term) in rows.iter().zip(&terms) {
+        output.push_str(&format!("\n  {label:<row_width$}  {term}"));
+    }
+    output.push('\n');
+
+    for device in &system.nonlinear {
+        match device {
+            NonlinearDevice::Diode(diode) => {
+                let voltage = |index: Option<usize>| {
+                    index.map(|index| system.layout.unknowns()[index].label.clone())
+                };
+                let junction = match (voltage(diode.anode), voltage(diode.cathode)) {
+                    (Some(anode), Some(cathode)) => format!("{anode} - {cathode}"),
+                    (Some(anode), None) => anode,
+                    (None, Some(cathode)) => format!("-{cathode}"),
+                    (None, None) => "0".to_owned(),
+                };
+                // `number` would print Is as zero
+                output.push_str(&format!(
+                    "\nid({}) = {:e} * (exp(({junction}) / {}) - 1)",
+                    diode.name,
+                    diode.saturation_current,
+                    number(diode.thermal_voltage),
+                ));
+            }
+        }
+    }
+
+    output
 }
 
 /// print a diagnostic factorization of G, with `P * G = L * U`

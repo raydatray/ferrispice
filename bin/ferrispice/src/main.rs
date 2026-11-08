@@ -65,8 +65,20 @@ fn run(args: args::Args) -> miette::Result<()> {
 
     let solution = match ferrispice_solver::solve_dc(&circuit) {
         Ok(solution) => solution,
-        Err(error) => return Err(diagnostics::analysis(error, &circuit, input_name, text)),
+        Err(error) => {
+            // the iterations leading up to a failure stay inspectable
+            if let (true, ferrispice_solver::DcError::SourceStepping(failure)) =
+                (args.trace_newton, &error)
+            {
+                output::print_failed_trace(&circuit, failure)?;
+            }
+            return Err(diagnostics::analysis(error, &circuit, input_name, text));
+        }
     };
+
+    if args.trace_newton {
+        output::print_trace(&circuit, &solution)?;
+    }
 
     if let Some(system) = system.as_ref().filter(|_| args.dump_mna) {
         output::print_f_at_solution(&circuit, system, &solution)?;

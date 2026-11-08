@@ -467,6 +467,196 @@ fn symbolic_f_remains_visible_when_the_solve_fails() {
     assert!(results(&stdout).is_empty(), "{stdout}");
 }
 
+fn trace(text: &str) -> Output {
+    let input = Input::new(text);
+    run(&[input.path.as_os_str(), OsStr::new("--trace-newton")])
+}
+
+const DIODE_DC: &str = "* diode circuit\nVin n1 0 DC 1\nD1 n1 n2\nR n2 0 50\n.dc\n.end\n";
+
+/// one row of a single-diode Newton table
+#[derive(Debug)]
+struct TraceRow {
+    iteration: usize,
+    vd: f64,
+    residual_in: f64,
+    voltage_change: f64,
+    node: String,
+    residual_out: f64,
+}
+
+/// rows of the first Newton table after `heading`, for circuits with one diode
+fn newton_rows(stdout: &str, heading: &str) -> Vec<TraceRow> {
+    let mut lines = stdout
+        .lines()
+        .skip_while(|line| !line.starts_with(heading))
+        .skip_while(|line| !line.trim_start().starts_with("iter"));
+    let header: Vec<_> = lines.next().unwrap().split_whitespace().collect();
+    assert_eq!(
+        header,
+        ["iter", "vd(D1)", "Φ", "in", "ΔV", "node", "Φ", "out"],
+        "{stdout}"
+    );
+
+    lines
+        .map_while(|line| {
+            let tokens: Vec<_> = line.split_whitespace().collect();
+            let [
+                iteration,
+                vd,
+                residual_in,
+                voltage_change,
+                node,
+                residual_out,
+            ] = tokens[..]
+            else {
+                return None;
+            };
+            Some(TraceRow {
+                iteration: iteration.parse().ok()?,
+                vd: vd.parse().ok()?,
+                residual_in: residual_in.parse().ok()?,
+                voltage_change: voltage_change.parse().ok()?,
+                node: node.to_owned(),
+                residual_out: residual_out.parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn traces_direct_newton_on_the_handout_circuit() {
+    let output = trace(DIODE_DC);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+
+    assert!(
+        stdout.lines().any(|line| line == "Newton trace"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Φ in: max |Φ(x_k)|, the residual put into the solve"),
+        "{stdout}"
+    );
+    let rows = newton_rows(
+        &stdout,
+        "direct Newton on the full circuit, from x = 0: converged",
+    );
+    assert!(rows.len() > 2, "{stdout}");
+    for (index, row) in rows.iter().enumerate() {
+        assert_eq!(row.iteration, index + 1);
+        assert!(["V(n1)", "V(n2)"].contains(&row.node.as_str()), "{row:?}");
+    }
+
+    // iteration 1 starts from x = 0, where only the source constraint fails
+    assert_eq!(rows[0].vd, 0.0);
+    assert_eq!(rows[0].residual_in, 1.0);
+    assert_eq!(
+        (rows[0].voltage_change, rows[0].node.as_str()),
+        (1.0, "V(n1)")
+    );
+
+    // iteration 2 linearizes at vd = 1 V and solves with the 235 A residual
+    // that iteration 1 left, stepping V(n2) up by about Vt
+    assert_eq!(rows[1].vd, 1.0);
+    assert!((rows[1].residual_in - 235.4).abs() < 0.1, "{stdout}");
+    assert_eq!(rows[1].node, "V(n2)");
+    assert!((rows[1].voltage_change - 0.025).abs() < 1e-4, "{stdout}");
+    assert!((rows[2].vd - 0.975).abs() < 1e-6, "{stdout}");
+
+    // each residual left by one iteration is the next iteration's input
+    for pair in rows.windows(2) {
+        assert_eq!(pair[1].residual_in, pair[0].residual_out, "{stdout}");
+    }
+
+    let last = rows.last().unwrap();
+    assert!((last.vd - 0.732686).abs() < 1e-6, "{stdout}");
+    assert!(
+        last.voltage_change.abs() < 1e-9 && last.residual_out < 1e-12,
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("converged in {} Newton iterations", rows.len())),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("source stepping"), "{stdout}");
+    assert!(stdout.find("Newton trace").unwrap() < stdout.find("nonlinear DC analysis").unwrap());
+    assert_eq!(results(&stdout), results(&success(DIODE_DC)));
+}
+
+#[test]
+fn traces_one_voltage_column_per_diode() {
+    let output = trace("Two diodes\nVin a 0 DC 1\nD1 a b\nR1 b 0 50\nD2 0 b\n.dc\n.end\n");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    let header = stdout
+        .lines()
+        .find(|line| line.starts_with("iter"))
+        .unwrap();
+    assert_eq!(
+        header.split_whitespace().collect::<Vec<_>>(),
+        [
+            "iter", "vd(D1)", "vd(D2)", "Φ", "in", "ΔV", "node", "Φ", "out"
+        ]
+    );
+}
+
+#[test]
+fn traces_each_source_stepping_attempt() {
+    let output = trace("Hundred volts\nVin n1 0 DC 100\nD1 n1 n2\nR n2 0 50\n.dc\n.end\n");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+
+    assert!(
+        stdout.contains("direct Newton on the full circuit, from x = 0: failed"),
+        "{stdout}"
+    );
+    let attempts: Vec<Vec<&str>> = stdout
+        .lines()
+        .skip_while(|line| !line.starts_with("source stepping:"))
+        .skip(2)
+        .take_while(|line| !line.is_empty())
+        .map(|line| line.split_whitespace().collect())
+        .collect();
+    // attempt, from, ->, to, step, result, iterations
+    assert!(attempts.iter().all(|row| row.len() == 7), "{attempts:?}");
+    assert!(attempts.iter().any(|row| row[5] == "rejected"), "{stdout}");
+    assert_eq!(attempts.last().unwrap()[3], "1");
+    assert_eq!(attempts.last().unwrap()[5], "accepted");
+    let headings = stdout
+        .lines()
+        .filter(|line| line.starts_with("attempt ") && line.contains(", λ = "))
+        .count();
+    assert_eq!(headings, attempts.len(), "{stdout}");
+    assert_results(&stdout, &[("V(n2)", 99.1194)]);
+}
+
+#[test]
+fn the_trace_remains_visible_when_the_nonlinear_solve_fails() {
+    let output = trace("Reverse\nI1 a 0 DC 1e-3\nD1 a 0\n.dc\n.end\n");
+    assert!(!output.status.success());
+    let stdout = output_text(output.stdout);
+
+    assert!(stdout.contains("Newton trace"), "{stdout}");
+    assert!(stdout.contains("source stepping stopped"), "{stdout}");
+    assert!(results(&stdout).is_empty(), "{stdout}");
+    assert!(!stdout.contains("nonlinear DC analysis"), "{stdout}");
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("nonlinear DC analysis failed")
+    );
+}
+
+#[test]
+fn linear_circuits_note_that_newton_was_not_used() {
+    let output = trace(DIVIDER);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    assert!(stdout.contains("Newton-Raphson was not used"), "{stdout}");
+    assert_eq!(results(&stdout), results(&success(DIVIDER)));
+}
+
 fn dump_lu(text: &str) -> Output {
     let input = Input::new(text);
     run(&[input.path.as_os_str(), OsStr::new("--dump-lu")])

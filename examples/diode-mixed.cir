@@ -1,0 +1,11 @@
+Diode with linear elements
+Vin in 0 DC 1
+R1 in 0 1000
+VCVS1 b 0 in 0 2
+D1 b c
+R2 c 0 100
+C1 c 0 1e-6
+L1 c d 1e-3
+R3 d 0 400
+.dc
+.end

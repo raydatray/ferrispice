@@ -10,7 +10,7 @@ netlist and circuit layers built in
 netlist text with D records
 -> parsed diode elements
 -> resolved anode and cathode nodes
--> validated circuit with diode model parameters
+-> validated circuit with diode parameters
 ```
 
 This is the first of four implementation stacks:
@@ -33,9 +33,9 @@ DC so that transient analysis can reuse it without restructuring.
 This plan covers:
 
 - The `D` prefix and its two-terminal record.
-- A typed diode element with an explicit `DiodeModel`.
-- Default model parameters from the handout, defined in one place.
-- Model-parameter validation and source-span preservation.
+- A typed diode element carrying its `Is` and `Vt`.
+- Default parameters from the handout, defined in one place.
+- Source-span preservation.
 - Inspection summary and diagnostic support for diodes.
 
 No crates are introduced. Diode equations belong to 0006.
@@ -66,52 +66,52 @@ R n2 0 50
 ## Representation
 
 ```rust
-pub struct DiodeModel {
-    pub saturation_current: f64, // Is, amperes
-    pub thermal_voltage: f64,    // Vt, volts
-}
+pub const DEFAULT_SATURATION_CURRENT: f64 = 1e-15; // Is, amperes
+pub const DEFAULT_THERMAL_VOLTAGE: f64 = 0.025;    // Vt, volts
 
-ElementKind::Diode { anode: NodeId, cathode: NodeId, model: DiodeModel }
+ElementKind::Diode { saturation_current: f64, thermal_voltage: f64 }
 ```
 
-`DiodeModel::default()` is the single source of the model constants,
-`Is = 1e-15 A` and `Vt = 0.025 V`. Every diode uses the default model in
-this deliverable.
+The parameters are plain fields, like every other element's. Compilation
+fills them from the two constants, which are the single source of the
+handout values; every diode uses them in this deliverable.
 
 The handout states `Is = 1e-14 A`, but its expected results (`V2 = 0.2673`,
 `IE = 0.0053`) are produced by `Is = 1e-15 A`; `1e-14 A` gives
 `V2 = 0.3204` and `I = 0.006407`. Use `1e-15 A` so the handout results are
 reproduced, and document the discrepancy.
 
-Terminal order follows the existing convention: `p = anode`, `n = cathode`,
-and positive current flows from anode to cathode.
+The anode and cathode are the element's existing `positive` and `negative`
+terminals, so terminal resolution is shared with every other element and
+positive current flows from anode to cathode.
 
 A diode has no branch-current unknown. `has_branch_current()` remains false,
 and naming a diode as a CCVS or CCCS controller is rejected by the existing
 controller validation.
 
-The model holds the two handout parameters only. Per-diode parameters,
+The diode holds the two handout parameters only. Per-diode parameters,
 `.model` cards, and junction capacitance are not planned.
 
 ## Validation
 
-Reject non-finite or non-positive `Is` and `Vt`. The netlist cannot yet set
-them, but the checks protect the public model API. A diode whose anode and
-cathode resolve to the same node is valid and contributes nothing, consistent
-with repeated-terminal handling elsewhere.
+`Is` and `Vt` come from fixed positive constants rather than the netlist, so
+there is nothing to validate. Parameter checks belong in `compile` alongside
+the other elements' if diode parameters ever become netlist values. A diode
+whose anode and cathode resolve to the same node is valid and contributes
+nothing, consistent with repeated-terminal handling elsewhere.
 
 ## Errors
 
-Diode record errors reuse the existing parser error kinds and spans. Model
-validation errors use the existing element-error path with the diode's source
-span, so the application highlights the offending record.
+Diode record errors reuse the existing parser error kinds and spans, so the
+application highlights the offending record. Diodes need no error types of
+their own.
 
 ## Diff Stack
 
 | Subject | Deliverable |
 | --- | --- |
 | `[1/3][d2][netlist] parse diode records` | `D` prefix, two-node record shape, field-count errors, precise spans |
-| `[2/3][d2][circuit] model diodes with default parameters` | `ElementKind::Diode`, `DiodeModel`, terminal resolution, parameter validation, controller rejection |
+| `[2/3][d2][circuit] model diodes with default parameters` | `ElementKind::Diode` with `Is` and `Vt` fields, default constants, terminal resolution, controller rejection |
 | `[3/3][d2][cli] inspect circuits containing diodes` | Summary output, diagnostics, handout netlist inspection test |
 
 Every diff builds. Until 0006 lands, assembly returns an explicit
@@ -125,8 +125,8 @@ Cover case-insensitive prefixes, a missing node, extra fields, and span
 accuracy including CRLF input.
 
 Check stable IDs, forward node references, reversed orientation, and
-same-node terminals. Reject a diode used as a current controller. Reject
-invalid model parameters through the model API.
+same-node terminals. Reject a diode used as a current controller. Confirm
+compiled diodes carry the default `Is` and `Vt`.
 
 Invoke the application on the handout netlist without `--dump` flags and
 confirm successful inspection, then on malformed diode records and confirm
@@ -139,6 +139,6 @@ Run `cargo test --workspace --all-targets` after each behavioral diff.
 The plan is complete when:
 
 - The handout netlist parses and compiles.
-- Diodes carry resolved terminals and a documented default model.
+- Diodes carry resolved terminals and the documented default `Is` and `Vt`.
 - Invalid diode records produce structured, source-highlighted errors.
 - 0006 can consume diodes without reparsing text or resolving names.

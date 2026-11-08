@@ -1,0 +1,6 @@
+Reverse-biased diode
+Vin n1 0 DC 5
+D1 n2 n1
+R n2 0 50
+.dc
+.end

@@ -69,14 +69,14 @@ Deliverable 1 layout and a convergence summary:
 │  V(n2)  = 0.267314 V               │
 │  I(Vin) = -0.00534629 A            │
 │                                    │
-│  converged in 16 Newton iterations │
+│  converged in 17 Newton iterations │
 │                                    │
 ╰────────────────────────────────────╯
 ```
 
 When source stepping was needed, the summary states it, for example
 `converged with source stepping: 7 steps accepted, 3 rejected,
-216 Newton iterations`.
+64 Newton iterations`.
 
 Values use the default `Is = 1e-15 A`. Linear circuits keep the
 `linear DC analysis` panel unchanged.
@@ -110,9 +110,20 @@ Circuits without nonlinear devices print `f(x) = 0`.
 
 `--trace-newton` prints the solve history from 0007 as nested tables.
 
-Each Newton attempt prints its iterations: iteration number, `max |Δx|` with
-the worst unknown label, and `max |Φ|`. The first attempt is the fast path on
-the full circuit. When it fails, the trace states why, then prints each
+Each Newton attempt prints its iterations so that the plug-back is visible:
+the residual one iteration leaves is the residual the next one solves with.
+
+```text
+iter  vd(D1)  Φ in      ΔV        node   Φ out
+   1  0       1.000e0   1.000e0   V(n1)  2.354e2
+   2  1       2.354e2   2.500e-2  V(n2)  8.659e1
+   3  0.975   8.659e1   2.500e-2  V(n2)  3.186e1
+```
+
+`vd` is each diode's voltage at the linearization point (up to four diodes),
+`Φ in` is `max |Φ(x_k)|`, `ΔV` is the largest node-voltage change with its
+node, and `Φ out` is `max |Φ(x_k + Δx)|`. A legend above the tables explains
+the columns. The first attempt is the fast path on the full circuit. When it fails, the trace states why, then prints each
 source-stepping attempt as a header followed by its Newton iterations:
 
 ```text
@@ -153,10 +164,11 @@ as successful.
 
 Provide runnable examples for:
 
-- The handout diode circuit.
-- A reverse-biased diode.
-- The handout topology driven at 100 V, which requires source stepping.
-- A diode mixed with Deliverable 1 elements.
+- The handout diode circuit (`examples/diode.cir`).
+- A reverse-biased diode (`examples/diode-reverse.cir`).
+- The handout topology driven at 100 V, which requires source stepping
+  (`examples/diode-source-stepping.cir`).
+- A diode mixed with Deliverable 1 elements (`examples/diode-mixed.cir`).
 
 Document in the README or linked usage document: diode syntax, the model
 equation, default parameters and why `Is = 1e-15 A` is used instead of the

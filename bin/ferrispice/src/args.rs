@@ -24,6 +24,10 @@ pub(crate) struct Args {
     /// print the LU factors L, U and row-permutation matrix P for G
     #[arg(long)]
     pub dump_lu: bool,
+
+    /// print every Newton-Raphson iteration and source-stepping attempt
+    #[arg(long)]
+    pub trace_newton: bool,
 }
 
 #[cfg(test)]
@@ -54,6 +58,15 @@ mod tests {
         let args = parse_strs(&["--dump-mna", "a.cir", "--dump-lu"]).unwrap();
         assert!(args.dump_mna && args.dump_lu);
         assert!(!parse_strs(&["a.cir"]).unwrap().dump_lu);
+    }
+
+    #[test]
+    fn trace_flag_is_independent_of_the_dump_flags() {
+        let args = parse_strs(&["a.cir", "--trace-newton"]).unwrap();
+        assert!(args.trace_newton && !args.dump_mna && !args.dump_lu);
+        let args = parse_strs(&["--trace-newton", "--dump-lu", "a.cir", "--dump-mna"]).unwrap();
+        assert!(args.trace_newton && args.dump_mna && args.dump_lu);
+        assert!(!parse_strs(&["a.cir"]).unwrap().trace_newton);
     }
 
     #[test]

@@ -1,7 +1,10 @@
 use boxen::{BorderStyle, TextAlignment, text::text_width};
 use ferrispice_circuit::{Circuit, ElementKind};
 use ferrispice_mna::{MnaSystem, NonlinearDevice, TermSign, UnknownKind, UnknownLayout};
-use ferrispice_solver::{DcMethod, DcSolution};
+use ferrispice_solver::{
+    DcMethod, DcSolution, NewtonError, NewtonIteration, NewtonSolution, SourceSteppingFailure,
+    StepAttempt,
+};
 use miette::{IntoDiagnostic, WrapErr};
 use nalgebra::{DMatrix, DVector};
 
@@ -82,6 +85,240 @@ fn convergence_summary(solution: &DcSolution) -> String {
             plural(iterations, "Newton iteration"),
         ),
         _ => format!("converged in {}", plural(iterations, "Newton iteration")),
+    }
+}
+
+/// diode columns beyond this are left out of the trace to keep it readable
+const TRACED_DIODES: usize = 4;
+
+/// what a Newton trace needs to label its columns
+struct TraceContext<'a> {
+    layout: &'a UnknownLayout,
+    /// name and matrix indices of the anode and cathode of each diode
+    diodes: Vec<(&'a str, Option<usize>, Option<usize>)>,
+}
+
+impl<'a> TraceContext<'a> {
+    fn new(circuit: &'a Circuit, layout: &'a UnknownLayout) -> Self {
+        let diodes = circuit
+            .elements()
+            .iter()
+            .filter(|element| matches!(element.kind, ElementKind::Diode { .. }))
+            .map(|element| {
+                (
+                    element.name.as_str(),
+                    layout.node_index(element.positive),
+                    layout.node_index(element.negative),
+                )
+            })
+            .collect();
+
+        Self { layout, diodes }
+    }
+}
+
+/// Newton-Raphson progress for a solved circuit
+pub(crate) fn print_trace(circuit: &Circuit, solution: &DcSolution) -> miette::Result<()> {
+    let context = TraceContext::new(circuit, solution.layout());
+    let body = match solution.method() {
+        DcMethod::Linear => "linear circuit: solved directly by one LU factorization of G; \
+                             Newton-Raphson was not used"
+            .to_owned(),
+        DcMethod::Newton(newton) => [
+            "direct Newton on the full circuit, from x = 0: converged".to_owned(),
+            newton_table(&context, &newton.iterations),
+        ]
+        .join("\n"),
+        DcMethod::SourceStepping { direct, stepping } => [
+            direct_failure(&context, direct),
+            stepping_section(&context, &stepping.attempts),
+        ]
+        .join("\n\n"),
+    };
+
+    print_panel("Newton trace", &[TRACE_LEGEND, &body].join("\n\n"))
+}
+
+/// Newton-Raphson progress up to a failed nonlinear solve
+pub(crate) fn print_failed_trace(
+    circuit: &Circuit,
+    failure: &SourceSteppingFailure,
+) -> miette::Result<()> {
+    let layout = UnknownLayout::new(circuit);
+    let context = TraceContext::new(circuit, &layout);
+    let body = [
+        TRACE_LEGEND.to_owned(),
+        direct_failure(&context, &failure.direct),
+        stepping_section(&context, &failure.stepping.attempts),
+        format!(
+            "source stepping stopped: the step fell to {} with the sources scaled by {}",
+            parameter(failure.stepping.step),
+            parameter(failure.stepping.reached),
+        ),
+    ]
+    .join("\n\n");
+
+    print_panel("Newton trace", &body)
+}
+
+const TRACE_LEGEND: &str = "each iteration linearizes at x_k and solves J(x_k) Δx = -Φ(x_k)\n\
+    vd: diode voltages at x_k, where f and J are evaluated\n\
+    Φ in: max |Φ(x_k)|, the residual put into the solve\n\
+    ΔV: the largest node-voltage change in Δx\n\
+    Φ out: max |Φ(x_k + Δx)|, the next iteration's Φ in";
+
+fn direct_failure(context: &TraceContext<'_>, error: &NewtonError) -> String {
+    [
+        format!("direct Newton on the full circuit, from x = 0: failed\n  {error}"),
+        newton_table(context, &error.iterations),
+    ]
+    .join("\n")
+}
+
+/// a summary of every attempt, then each attempt's Newton iterations
+fn stepping_section(
+    context: &TraceContext<'_>,
+    attempts: &[StepAttempt<NewtonSolution, NewtonError>],
+) -> String {
+    let mut lines = vec![
+        "source stepping: solve G x + f(x) = λ b, ramping λ from 0 to 1".to_owned(),
+        format!(
+            "  {:>7}  {:>21}  {:>10}  {:<8}  {:>10}",
+            "attempt", "λ from -> to", "step", "result", "iterations"
+        ),
+    ];
+
+    for (index, attempt) in attempts.iter().enumerate() {
+        let (result, iterations) = match &attempt.outcome {
+            Ok(solution) => ("accepted", solution.iterations.len()),
+            Err(error) => ("rejected", error.iterations.len()),
+        };
+        lines.push(format!(
+            "  {:>7}  {:>21}  {:>10}  {result:<8}  {iterations:>10}",
+            index + 1,
+            format!("{} -> {}", parameter(attempt.from), parameter(attempt.to)),
+            parameter(attempt.step()),
+        ));
+    }
+
+    for (index, attempt) in attempts.iter().enumerate() {
+        let (status, iterations) = match &attempt.outcome {
+            Ok(solution) => ("accepted".to_owned(), &solution.iterations),
+            Err(error) => (format!("rejected: {error}"), &error.iterations),
+        };
+        lines.push(String::new());
+        lines.push(format!(
+            "attempt {}, λ = {}: {status}",
+            index + 1,
+            parameter(attempt.to)
+        ));
+        lines.push(newton_table(context, iterations));
+    }
+
+    lines.join("\n")
+}
+
+/// one row per Newton iteration: the diode voltages it linearized at, the
+/// residual it solved with, the largest node-voltage change, and the
+/// residual it left for the next iteration
+fn newton_table(context: &TraceContext<'_>, iterations: &[NewtonIteration]) -> String {
+    if iterations.is_empty() {
+        return "  (no completed iterations)".to_owned();
+    }
+
+    let unknowns = context.layout.unknowns();
+    let diodes = &context.diodes[..context.diodes.len().min(TRACED_DIODES)];
+
+    let mut header = vec!["iter".to_owned()];
+    header.extend(diodes.iter().map(|(name, _, _)| format!("vd({name})")));
+    header.extend(["Φ in", "ΔV", "node", "Φ out"].map(str::to_owned));
+
+    let rows: Vec<Vec<String>> = iterations
+        .iter()
+        .enumerate()
+        .map(|(index, iteration)| {
+            let x = &iteration.linearized_at;
+            let voltage = |node: Option<usize>| node.map_or(0.0, |node| x[node]);
+
+            let mut row = vec![(index + 1).to_string()];
+            row.extend(
+                diodes
+                    .iter()
+                    .map(|&(_, anode, cathode)| number(voltage(anode) - voltage(cathode))),
+            );
+
+            // node voltages are what a reader can follow; a circuit without
+            // any falls back to the unknown that limited convergence
+            let changed = (0..unknowns.len())
+                .filter(|&index| matches!(unknowns[index].kind, UnknownKind::NodeVoltage(_)))
+                .max_by(|&a, &b| {
+                    iteration.delta[a]
+                        .abs()
+                        .total_cmp(&iteration.delta[b].abs())
+                })
+                .or(iteration.worst_unknown);
+            let (change, label) = changed.map_or((String::new(), "-"), |index| {
+                (
+                    format!("{:.3e}", iteration.delta[index]),
+                    unknowns[index].label.as_str(),
+                )
+            });
+
+            row.extend([
+                format!("{:.3e}", iteration.residual_in),
+                change,
+                label.to_owned(),
+                format!("{:.3e}", iteration.residual),
+            ]);
+            row
+        })
+        .collect();
+
+    let widths: Vec<_> = (0..header.len())
+        .map(|column| {
+            rows.iter()
+                .map(|row| text_width(&row[column]))
+                .chain([text_width(&header[column])])
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    let node_column = header.len() - 2;
+    let format_row = |row: &[String]| {
+        let cells: Vec<_> = row
+            .iter()
+            .enumerate()
+            .map(|(column, cell)| {
+                let padding = " ".repeat(widths[column] - text_width(cell));
+                if column == node_column {
+                    format!("{cell}{padding}")
+                } else {
+                    format!("{padding}{cell}")
+                }
+            })
+            .collect();
+        format!("  {}", cells.join("  ").trim_end())
+    };
+
+    let mut lines = vec![format_row(&header)];
+    lines.extend(rows.iter().map(|row| format_row(row)));
+    if context.diodes.len() > diodes.len() {
+        lines.push(format!(
+            "  (vd shown for the first {} of {} diodes)",
+            diodes.len(),
+            context.diodes.len()
+        ));
+    }
+
+    lines.join("\n")
+}
+
+/// source scales and step sizes, which can be far below the zero threshold
+fn parameter(value: f64) -> String {
+    if value != 0.0 && value.abs() < ZERO_THRESHOLD {
+        format!("{value:.3e}")
+    } else {
+        number(value)
     }
 }
 

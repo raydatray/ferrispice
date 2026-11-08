@@ -436,9 +436,49 @@ fn format_f(system: &MnaSystem, rows: &[String]) -> String {
 
 /// print a diagnostic factorization of G, with `P * G = L * U`
 pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) -> miette::Result<()> {
-    // solve_dc computes its own factorization; this one is only for inspection
-    let lu = system.g.clone().lu();
-    let n = system.g.nrows();
+    print_factorization(circuit, system, &system.g, "G", "LU decomposition")
+}
+
+/// print a diagnostic factorization of the Jacobian at the operating point,
+/// the matrix Newton-Raphson solved last
+pub(crate) fn print_jacobian_lu(
+    circuit: &Circuit,
+    system: &MnaSystem,
+    solution: &DcSolution,
+) -> miette::Result<()> {
+    match solution.jacobian() {
+        Some(jacobian) => print_factorization(
+            circuit,
+            system,
+            jacobian,
+            "J",
+            "LU decomposition of J = G + ∂f/∂x at the operating point",
+        ),
+        None => print_lu(circuit, system),
+    }
+}
+
+/// a nonlinear circuit's Jacobian depends on an operating point that was not found
+pub(crate) fn print_no_jacobian(reason: &str) -> miette::Result<()> {
+    print_panel(
+        "LU decomposition",
+        &format!(
+            "J = G + ∂f/∂x depends on the operating point, and {reason}; \
+             no Jacobian is available to factor"
+        ),
+    )
+}
+
+fn print_factorization(
+    circuit: &Circuit,
+    system: &MnaSystem,
+    matrix: &DMatrix<f64>,
+    symbol: &str,
+    title: &str,
+) -> miette::Result<()> {
+    // the solver computes its own factorization; this one is only for inspection
+    let lu = matrix.clone().lu();
+    let n = matrix.nrows();
     let mut p = DMatrix::<f64>::identity(n, n);
     lu.p().permute_rows(&mut p);
 
@@ -462,7 +502,7 @@ pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) -> miette::Result<
     let columns: Vec<_> = system.layout.labels().map(str::to_owned).collect();
 
     let body = [
-        "P * G = L * U".to_owned(),
+        format!("P * {symbol} = L * U"),
         "factor rows: [position <- original MNA row] equation".to_owned(),
         format_matrix("P", &p, &factor_positions, &original_positions),
         format_matrix("L", &lu.l(), &rows, &pivots),
@@ -470,7 +510,7 @@ pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) -> miette::Result<
     ]
     .join("\n\n");
 
-    print_panel("LU decomposition", &body)
+    print_panel(title, &body)
 }
 
 fn equation_labels(circuit: &Circuit, system: &MnaSystem) -> Vec<String> {

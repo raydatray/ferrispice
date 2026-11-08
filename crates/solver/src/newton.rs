@@ -35,7 +35,7 @@ impl Default for NewtonOptions {
     fn default() -> Self {
         Self {
             max_iterations: 50,
-            reltol: 1e-6,
+            reltol: 1e-9,
             vntol: 1e-9,
             abstol: 1e-12,
         }

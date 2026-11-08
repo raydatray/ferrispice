@@ -1,4 +1,3 @@
-use boxen::{BorderStyle, TextAlignment, text::text_width};
 use ferrispice_circuit::{Circuit, ElementKind};
 use ferrispice_mna::{MnaSystem, NonlinearDevice, TermSign, UnknownKind, UnknownLayout};
 use ferrispice_solver::{
@@ -7,6 +6,7 @@ use ferrispice_solver::{
 };
 use miette::{IntoDiagnostic, WrapErr};
 use nalgebra::{DMatrix, DVector};
+use unicode_width::UnicodeWidthStr;
 
 /// significant digits for printed quantities and matrix entries.
 const SIGNIFICANT_DIGITS: i32 = 6;
@@ -436,9 +436,49 @@ fn format_f(system: &MnaSystem, rows: &[String]) -> String {
 
 /// print a diagnostic factorization of G, with `P * G = L * U`
 pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) -> miette::Result<()> {
-    // solve_dc computes its own factorization; this one is only for inspection
-    let lu = system.g.clone().lu();
-    let n = system.g.nrows();
+    print_factorization(circuit, system, &system.g, "G", "LU decomposition")
+}
+
+/// print a diagnostic factorization of the Jacobian at the operating point,
+/// the matrix Newton-Raphson solved last
+pub(crate) fn print_jacobian_lu(
+    circuit: &Circuit,
+    system: &MnaSystem,
+    solution: &DcSolution,
+) -> miette::Result<()> {
+    match solution.jacobian() {
+        Some(jacobian) => print_factorization(
+            circuit,
+            system,
+            jacobian,
+            "J",
+            "LU decomposition of J = G + ∂f/∂x at the operating point",
+        ),
+        None => print_lu(circuit, system),
+    }
+}
+
+/// a nonlinear circuit's Jacobian depends on an operating point that was not found
+pub(crate) fn print_no_jacobian(reason: &str) -> miette::Result<()> {
+    print_panel(
+        "LU decomposition",
+        &format!(
+            "J = G + ∂f/∂x depends on the operating point, and {reason}; \
+             no Jacobian is available to factor"
+        ),
+    )
+}
+
+fn print_factorization(
+    circuit: &Circuit,
+    system: &MnaSystem,
+    matrix: &DMatrix<f64>,
+    symbol: &str,
+    title: &str,
+) -> miette::Result<()> {
+    // the solver computes its own factorization; this one is only for inspection
+    let lu = matrix.clone().lu();
+    let n = matrix.nrows();
     let mut p = DMatrix::<f64>::identity(n, n);
     lu.p().permute_rows(&mut p);
 
@@ -462,7 +502,7 @@ pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) -> miette::Result<
     let columns: Vec<_> = system.layout.labels().map(str::to_owned).collect();
 
     let body = [
-        "P * G = L * U".to_owned(),
+        format!("P * {symbol} = L * U"),
         "factor rows: [position <- original MNA row] equation".to_owned(),
         format_matrix("P", &p, &factor_positions, &original_positions),
         format_matrix("L", &lu.l(), &rows, &pivots),
@@ -470,7 +510,7 @@ pub(crate) fn print_lu(circuit: &Circuit, system: &MnaSystem) -> miette::Result<
     ]
     .join("\n\n");
 
-    print_panel("LU decomposition", &body)
+    print_panel(title, &body)
 }
 
 fn equation_labels(circuit: &Circuit, system: &MnaSystem) -> Vec<String> {
@@ -541,31 +581,65 @@ fn format_matrix(name: &str, matrix: &DMatrix<f64>, rows: &[String], columns: &[
     output
 }
 
+/// terminal width when it cannot be detected, for example when output is piped
+const DEFAULT_TERMINAL_WIDTH: usize = 80;
+
+/// print `body` in a rounded, titled panel
+///
+/// panels may be taller than the terminal, which scrolls; a panel wider than
+/// the terminal prints without its border so matrix columns stay intact
 fn print_panel(title: &str, body: &str) -> miette::Result<()> {
+    match render_panel(title, body, terminal_width()) {
+        Some(panel) => println!("{panel}\n"),
+        None => println!("{title}\n\n{body}\n"),
+    }
+    Ok(())
+}
+
+/// a rounded border with the title in the top edge and two columns of padding
+/// on each side; `None` when the panel would be wider than `terminal_width`
+fn render_panel(title: &str, body: &str, terminal_width: usize) -> Option<String> {
+    let title = format!(" {title} ");
     let content_width = body
         .lines()
         .map(text_width)
-        .chain([text_width(title) + 2])
+        .chain([text_width(&title)])
         .max()
-        .unwrap_or(1);
-    let panel_width = content_width + 6;
-    if panel_width > boxen::get_terminal_width() {
-        println!("{title}\n\n{body}\n");
-        return Ok(());
+        .unwrap_or(0);
+    // two columns of padding on each side of the content
+    let inner_width = content_width + 4;
+    if inner_width + 2 > terminal_width {
+        return None;
     }
 
-    let panel = boxen::builder()
-        .title(format!(" {title} "))
-        .border_style(BorderStyle::Round)
-        .padding((1, 2, 1, 2))
-        .text_alignment(TextAlignment::Left)
-        .width(panel_width)
-        .render(body)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("could not render {title} panel"))?;
+    let blank = format!("│{}│", " ".repeat(inner_width));
+    let mut lines = vec![
+        format!("╭{title}{}╮", "─".repeat(inner_width - text_width(&title))),
+        blank.clone(),
+    ];
+    lines.extend(body.lines().map(|line| {
+        let padding = " ".repeat(content_width - text_width(line));
+        format!("│  {line}{padding}  │")
+    }));
+    lines.push(blank);
+    lines.push(format!("╰{}╯", "─".repeat(inner_width)));
 
-    println!("{panel}\n");
-    Ok(())
+    Some(lines.join("\n"))
+}
+
+/// `COLUMNS` overrides the detected terminal width
+fn terminal_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|columns| columns.parse().ok())
+        .or_else(|| terminal_size::terminal_size().map(|(width, _)| usize::from(width.0)))
+        .unwrap_or(DEFAULT_TERMINAL_WIDTH)
+}
+
+/// display columns occupied by `text`; `Φ`, `Δ`, and box-drawing characters
+/// take several bytes but one column
+fn text_width(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
 }
 
 fn width(labels: &[String]) -> usize {
@@ -602,7 +676,61 @@ fn trim_fraction(mut number: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::number;
+    use super::{number, render_panel, text_width};
+
+    #[test]
+    fn panels_draw_a_rounded_titled_border_with_padding() {
+        let panel = render_panel("title", "a\nlonger line", 80).unwrap();
+
+        assert_eq!(
+            panel,
+            [
+                "╭ title ────────╮",
+                "│               │",
+                "│  a            │",
+                "│  longer line  │",
+                "│               │",
+                "╰───────────────╯",
+            ]
+            .join("\n")
+        );
+    }
+
+    #[test]
+    fn panels_taller_than_any_terminal_keep_their_border() {
+        let body: Vec<_> = (0..200).map(|line| format!("line {line}")).collect();
+        let panel = render_panel("tall", &body.join("\n"), 80).unwrap();
+        let lines: Vec<_> = panel.lines().collect();
+
+        assert_eq!(lines.len(), 204);
+        assert!(lines[0].starts_with("╭ tall ") && lines[0].ends_with('╮'));
+        assert!(lines[203].starts_with('╰') && lines[203].ends_with('╯'));
+        // "line 199" sets the width, so "line 99" gets one column of padding
+        assert_eq!(lines[101], "│  line 99   │");
+        let width = text_width(lines[0]);
+        assert!(lines.iter().all(|line| text_width(line) == width));
+    }
+
+    #[test]
+    fn wide_unicode_content_keeps_the_right_edge_aligned() {
+        let panel = render_panel("Newton trace", "Φ in  ΔV\n∂f/∂x", 80).unwrap();
+        let width = text_width(panel.lines().next().unwrap());
+
+        assert!(
+            panel.lines().all(|line| text_width(line) == width),
+            "{panel}"
+        );
+    }
+
+    #[test]
+    fn panels_wider_than_the_terminal_are_not_drawn() {
+        let body = "x".repeat(75);
+
+        assert!(render_panel("wide", &body, 81).is_some());
+        assert!(render_panel("wide", &body, 80).is_none());
+        // a title longer than the body sets the width
+        assert!(render_panel(&"t".repeat(80), "x", 80).is_none());
+    }
 
     #[test]
     fn numbers_use_six_significant_digits_and_scientific_extremes() {

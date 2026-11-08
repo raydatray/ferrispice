@@ -56,7 +56,7 @@ pub struct NewtonProblem<'a> {
 
 pub struct NewtonOptions {
     pub max_iterations: usize,  // 50
-    pub reltol: f64,            // 1e-6
+    pub reltol: f64,            // 1e-9
     pub vntol: f64,             // 1e-9 V
     pub abstol: f64,            // 1e-12 A
 }
@@ -102,8 +102,9 @@ Converge only when both hold:
    `abstol` plus `reltol` times the largest current magnitude contributing to
    the row; branch rows use `vntol`.
 
-The tolerances are tighter than the handout's four significant digits so
-reported digits are reliable. `solve_linear`'s own residual check verifies
+The relative tolerance is tighter than the six printed significant digits
+so reported digits are reliable; validation showed that `1e-6` left KCL
+errors of about `1e-7` relative at 20 A. `solve_linear`'s own residual check verifies
 the linear update only; Newton convergence is checked separately.
 
 The iteration limit is deliberately modest. An attempt that is not
@@ -125,9 +126,20 @@ solution and never perturbs the matrix.
 
 ### History
 
-`NewtonSolution` contains the solution, iteration count, per-iteration
-`max |Δx|` with the worst unknown, `max |Φ|`, and the final `J` so the binary
-can factor it for inspection.
+`NewtonSolution` contains the solution, the final `J` so the binary can
+factor it for inspection, and one `NewtonIteration` per iteration:
+
+- `linearized_at`: `x_k`, where `f` and `J` were evaluated
+- `residual_in`: `max |Φ(x_k)|`, the residual put into the solve
+- `delta`: `Δx`
+- `worst_unknown` and `update`: the unknown whose update is largest relative
+  to its tolerance, and its `|Δx|`
+- `residual`: `max |Φ(x_k + Δx)|`
+
+Each iteration's `linearized_at` is the previous `linearized_at + delta`,
+and its `residual_in` is the previous `residual`. Keeping the iterates lets
+the binary show diode voltages and node-voltage steps without the solver
+knowing how they are presented.
 
 ## Adaptive Step Controller
 
@@ -140,7 +152,7 @@ the step falls below a minimum.
 ```rust
 pub struct StepOptions {
     pub initial_step: f64,      // DC: 0.1
-    pub min_step: f64,          // DC: 1e-6
+    pub min_step: f64,          // DC: 1e-15
     pub max_step: Option<f64>,  // DC: none
 }
 
@@ -202,6 +214,17 @@ close, each attempt begins near its answer.
 With `initial_step = 0.1`, an uninterrupted ramp visits
 `λ = 0.1, 0.3, 0.7, 1.0`. A failure at `0.7` retries at `0.5`.
 
+The minimum step is `1e-15` rather than a more typical `1e-6`. A diode at
+`x = 0` conducts only `Is / Vt`, so the first Newton update for a current
+source driving it is roughly `I / (Is / Vt)` volts. The source must be
+scaled down to about `Is` before that update stays within `exp`'s range;
+the doubling steps then reach full strength in a few dozen attempts.
+
+Large overshoots usually end an attempt as a singular linear solve rather
+than at the iteration limit: once `gd` is enormous, the other pivots fall
+below `solve_linear`'s relative singularity threshold. Either way the attempt
+fails and the step halves.
+
 If the controller gives up, `solve_dc` returns a source-stepping error that
 preserves the fast-path failure, the `λ` reached, and the last attempt's
 `NewtonError`.
@@ -220,7 +243,10 @@ All other element currents are unchanged from Deliverable 1.
 
 ## Errors
 
-`DcError` gains Newton and source-stepping variants and preserves causes.
+`DcError` gains a boxed `SourceSteppingFailure` variant holding the
+fast-path `NewtonError` and the `SteppingError`, preserving every cause.
+`NewtonError` carries its failure kind and the iterations completed before
+it failed, so traces remain available.
 Failed solves never return fabricated results.
 
 ## Deliverable 3 Compatibility

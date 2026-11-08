@@ -771,6 +771,68 @@ fn lu_dump_handles_an_empty_system() {
 }
 
 #[test]
+fn nonlinear_lu_dump_factors_the_jacobian_at_the_operating_point() {
+    let input = Input::new(DIODE_DC);
+    let output = run(&[
+        input.path.as_os_str(),
+        OsStr::new("--dump-mna"),
+        OsStr::new("--dump-lu"),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+
+    assert!(
+        stdout.contains("LU decomposition of J = G + ∂f/∂x at the operating point"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line == "P * J = L * U"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.lines().any(|line| line == "P * G = L * U"),
+        "{stdout}"
+    );
+
+    let g = dense_matrix(&stdout, "G", 3);
+    let p = dense_matrix(&stdout, "P", 3);
+    let l = dense_matrix(&stdout, "L", 3);
+    let u = dense_matrix(&stdout, "U", 3);
+    let jacobian = p.transpose() * &l * &u;
+
+    // J - G is the diode conductance in the resistor pattern on n1 and n2
+    let gd = (0.00534629 + 1e-15) / 0.025;
+    let expected = DMatrix::from_row_slice(3, 3, &[gd, -gd, 0.0, -gd, gd, 0.0, 0.0, 0.0, 0.0]);
+    assert!((&jacobian - &g - expected).amax() < 1e-5, "{stdout}");
+
+    // the factorization follows the solve and precedes the results
+    let position = |text: &str| stdout.find(text).unwrap();
+    assert!(position("f(x*):") < position("P * J"));
+    assert!(position("U:") < position("nonlinear DC analysis"));
+    assert_eq!(results(&stdout), results(&success(DIODE_DC)));
+}
+
+#[test]
+fn nonlinear_lu_dump_needs_an_operating_point() {
+    for (text, reason, succeeds) in [
+        (DIODE_CIRCUIT, "no analysis was requested", true),
+        (
+            "Reverse\nI1 a 0 DC 1e-3\nD1 a 0\n.dc\n.end\n",
+            "the nonlinear solve did not converge",
+            false,
+        ),
+    ] {
+        let output = dump_lu(text);
+        assert_eq!(output.status.success(), succeeds, "{output:?}");
+        let stdout = output_text(output.stdout);
+        let words = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(words.contains(reason), "{stdout}");
+        assert!(words.contains("no Jacobian is available"), "{stdout}");
+        assert!(!stdout.lines().any(|line| line == "P:"), "{stdout}");
+    }
+}
+
+#[test]
 fn input_errors_render_source_context_and_exit_without_success_output() {
     for (text, expected) in [
         ("Title\nR1 a 0 100", "finish the netlist with `.end`"),

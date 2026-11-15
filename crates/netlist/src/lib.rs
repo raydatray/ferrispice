@@ -8,7 +8,9 @@ mod scan;
 mod span;
 mod token;
 
-pub use ast::{Analysis, AnalysisRequest, ParsedElement, ParsedKind, ParsedNetlist};
+pub use ast::{
+    Analysis, AnalysisRequest, ParsedElement, ParsedKind, ParsedNetlist, ParsedWaveform,
+};
 pub use error::{ParseError, ParseErrorKind};
 pub use parser::parse;
 pub use position::NetlistPosition;

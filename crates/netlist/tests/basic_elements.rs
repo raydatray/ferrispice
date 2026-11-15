@@ -1,4 +1,6 @@
-use ferrispice_netlist::{Analysis, NetlistPosition, ParseErrorKind, ParsedKind, parse};
+use ferrispice_netlist::{
+    Analysis, NetlistPosition, ParseErrorKind, ParsedKind, ParsedWaveform, parse,
+};
 
 #[test]
 fn parses_the_handout_divider() {
@@ -12,7 +14,9 @@ fn parses_the_handout_divider() {
     assert_eq!(parsed.elements[0].negative, "0");
     assert_eq!(
         parsed.elements[0].kind,
-        ParsedKind::VoltageSource { dc: 6.0 }
+        ParsedKind::VoltageSource {
+            waveform: ParsedWaveform::Dc(6.0)
+        }
     );
     assert_eq!(
         parsed.elements[1].kind,
@@ -45,8 +49,12 @@ fn parses_passives_and_signed_dc_sources() {
             &ParsedKind::Resistor { resistance: -100.0 },
             &ParsedKind::Capacitor { capacitance: 1e-6 },
             &ParsedKind::Inductor { inductance: 0.0 },
-            &ParsedKind::VoltageSource { dc: 6.0 },
-            &ParsedKind::CurrentSource { dc: -0.5 },
+            &ParsedKind::VoltageSource {
+                waveform: ParsedWaveform::Dc(6.0)
+            },
+            &ParsedKind::CurrentSource {
+                waveform: ParsedWaveform::Dc(-0.5)
+            },
         ]
     );
     assert_eq!(parsed.elements[0].positive, "P");
@@ -87,7 +95,10 @@ fn enforces_record_shapes_and_explicit_dc_keyword() {
     let error = parse("Title\nV1 a 0 AC 1\n.end").unwrap_err();
 
     assert_eq!(error.location, NetlistPosition::new(2, 8));
-    assert!(matches!(error.kind, ParseErrorKind::ExpectedDc { .. }));
+    assert!(matches!(
+        error.kind,
+        ParseErrorKind::UnknownSourceMode { .. }
+    ));
 }
 
 #[test]
@@ -116,7 +127,9 @@ fn element_values_accept_scale_suffixes_and_units() {
             &ParsedKind::Resistor { resistance: 1e3 },
             &ParsedKind::Capacitor { capacitance: 1e-4 },
             &ParsedKind::Inductor { inductance: 2.5e-3 },
-            &ParsedKind::VoltageSource { dc: 1.5 },
+            &ParsedKind::VoltageSource {
+                waveform: ParsedWaveform::Dc(1.5)
+            },
         ]
     );
 

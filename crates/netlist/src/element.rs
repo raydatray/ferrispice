@@ -1,6 +1,6 @@
 use crate::number::parse_number;
 use crate::scan::{RawElement, require_fields};
-use crate::{ParseError, ParseErrorKind, ParsedElement, ParsedKind};
+use crate::{ParseError, ParseErrorKind, ParsedElement, ParsedKind, ParsedWaveform};
 
 #[derive(Clone, Copy)]
 enum Family {
@@ -31,10 +31,10 @@ pub(crate) fn parse_element(record: RawElement<'_>) -> Result<ParsedElement, Par
             inductance: parse_element_value(&record, 4, "Lname positive negative inductance")?,
         },
         Family::VoltageSource => ParsedKind::VoltageSource {
-            dc: parse_dc_source_value(&record, "Vname positive negative DC value")?,
+            waveform: parse_waveform(&record, &VOLTAGE_SOURCE_SHAPES)?,
         },
         Family::CurrentSource => ParsedKind::CurrentSource {
-            dc: parse_dc_source_value(&record, "Iname positive negative DC value")?,
+            waveform: parse_waveform(&record, &CURRENT_SOURCE_SHAPES)?,
         },
         Family::Vcvs => {
             let gain = parse_element_value(
@@ -140,25 +140,69 @@ fn parse_element_value(
     parse_number(token.text, token.location, token.span)
 }
 
-fn parse_dc_source_value(
-    record: &RawElement<'_>,
-    expected: &'static str,
-) -> Result<f64, ParseError> {
-    require_fields(&record.tokens, 5, expected)?;
+/// the record shapes of one independent-source family, for field-count errors
+struct SourceShapes {
+    any: &'static str,
+    dc: &'static str,
+    cos: &'static str,
+    sin: &'static str,
+}
 
-    let mode = record.tokens[3];
-    if !mode.text.eq_ignore_ascii_case("DC") {
-        return Err(ParseError::new(
-            mode.location,
-            mode.span,
-            ParseErrorKind::ExpectedDc {
-                found: mode.text.to_owned(),
-            },
-        ));
+const VOLTAGE_SOURCE_SHAPES: SourceShapes = SourceShapes {
+    any: "Vname positive negative DC value, COS amplitude frequency, or SIN amplitude frequency",
+    dc: "Vname positive negative DC value",
+    cos: "Vname positive negative COS amplitude frequency",
+    sin: "Vname positive negative SIN amplitude frequency",
+};
+
+const CURRENT_SOURCE_SHAPES: SourceShapes = SourceShapes {
+    any: "Iname positive negative DC value, COS amplitude frequency, or SIN amplitude frequency",
+    dc: "Iname positive negative DC value",
+    cos: "Iname positive negative COS amplitude frequency",
+    sin: "Iname positive negative SIN amplitude frequency",
+};
+
+/// `DC value`, `COS amplitude frequency`, or `SIN amplitude frequency`, with a
+/// case-insensitive keyword
+fn parse_waveform(
+    record: &RawElement<'_>,
+    shapes: &SourceShapes,
+) -> Result<ParsedWaveform, ParseError> {
+    // every mode has a keyword and at least one value
+    if record.tokens.len() < 5 {
+        require_fields(&record.tokens, 5, shapes.any)?;
     }
 
-    let value = record.tokens[4];
-    parse_number(value.text, value.location, value.span)
+    let mode = record.tokens[3];
+    let value = |index: usize| {
+        let token = record.tokens[index];
+        parse_number(token.text, token.location, token.span)
+    };
+
+    if mode.text.eq_ignore_ascii_case("DC") {
+        require_fields(&record.tokens, 5, shapes.dc)?;
+        Ok(ParsedWaveform::Dc(value(4)?))
+    } else if mode.text.eq_ignore_ascii_case("COS") {
+        require_fields(&record.tokens, 6, shapes.cos)?;
+        Ok(ParsedWaveform::Cos {
+            amplitude: value(4)?,
+            frequency: value(5)?,
+        })
+    } else if mode.text.eq_ignore_ascii_case("SIN") {
+        require_fields(&record.tokens, 6, shapes.sin)?;
+        Ok(ParsedWaveform::Sin {
+            amplitude: value(4)?,
+            frequency: value(5)?,
+        })
+    } else {
+        Err(ParseError::new(
+            mode.location,
+            mode.span,
+            ParseErrorKind::UnknownSourceMode {
+                found: mode.text.to_owned(),
+            },
+        ))
+    }
 }
 
 fn unsupported(record: &RawElement<'_>) -> ParseError {

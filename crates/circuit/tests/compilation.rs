@@ -1,7 +1,7 @@
 use ferrispice_circuit::{
     CircuitError, ElementError, ElementErrorKind, ElementKind, GROUND, compile,
 };
-use ferrispice_netlist::{NetlistPosition, ParsedKind, ParsedNetlist, parse};
+use ferrispice_netlist::{NetlistPosition, ParsedKind, ParsedNetlist, ParsedWaveform, parse};
 
 fn element_error(parsed: &ParsedNetlist) -> ElementError {
     match compile(parsed).unwrap_err() {
@@ -273,8 +273,12 @@ fn manually_constructed_syntax_cannot_bypass_finite_parameter_validation() {
         ParsedKind::Inductor {
             inductance: f64::NEG_INFINITY,
         },
-        ParsedKind::VoltageSource { dc: f64::NAN },
-        ParsedKind::CurrentSource { dc: f64::NAN },
+        ParsedKind::VoltageSource {
+            waveform: ParsedWaveform::Dc(f64::NAN),
+        },
+        ParsedKind::CurrentSource {
+            waveform: ParsedWaveform::Dc(f64::NAN),
+        },
         ParsedKind::Vcvs {
             control_positive: "b".into(),
             control_negative: "0".into(),

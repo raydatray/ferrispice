@@ -45,8 +45,8 @@ pub enum ParseErrorKind {
         found: usize,
     },
 
-    #[error("expected the DC keyword, found {found:?}")]
-    ExpectedDc { found: String },
+    #[error("expected the source mode DC, COS, or SIN, found {found:?}")]
+    UnknownSourceMode { found: String },
 
     #[error(
         "expected a decimal or scientific-notation number with an optional scale \

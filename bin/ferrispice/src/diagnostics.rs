@@ -129,9 +129,11 @@ impl NetlistDiagnostic {
                         Some("use the first line as the circuit title".to_owned())
                     }
                     ParseErrorKind::MissingEnd => Some("finish the netlist with `.end`".to_owned()),
-                    ParseErrorKind::ExpectedDc { .. } => {
-                        Some("independent sources use: name positive negative DC value".to_owned())
-                    }
+                    ParseErrorKind::UnknownSourceMode { .. } => Some(
+                        "independent sources use: name positive negative DC value, \
+                         COS amplitude frequency, or SIN amplitude frequency"
+                            .to_owned(),
+                    ),
                     _ => None,
                 };
                 (Some(error.span), error.kind.to_string(), None, help)

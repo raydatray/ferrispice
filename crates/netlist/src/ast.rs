@@ -49,10 +49,10 @@ pub enum ParsedKind {
         inductance: f64,
     },
     VoltageSource {
-        dc: f64,
+        waveform: ParsedWaveform,
     },
     CurrentSource {
-        dc: f64,
+        waveform: ParsedWaveform,
     },
     Vcvs {
         control_positive: String,
@@ -74,4 +74,15 @@ pub enum ParsedKind {
     },
     /// `positive` is the anode and `negative` is the cathode
     Diode,
+}
+
+/// the value of an independent source over time, as written in the netlist
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ParsedWaveform {
+    /// `DC value`: constant
+    Dc(f64),
+    /// `COS amplitude frequency`: `amplitude * cos(2π · frequency · t)`
+    Cos { amplitude: f64, frequency: f64 },
+    /// `SIN amplitude frequency`: `amplitude * sin(2π · frequency · t)`
+    Sin { amplitude: f64, frequency: f64 },
 }

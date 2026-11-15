@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ferrispice_netlist::{ParsedElement, ParsedKind, ParsedNetlist};
+use ferrispice_netlist::{ParsedElement, ParsedKind, ParsedNetlist, ParsedWaveform};
 
 use crate::model::name_key;
 use crate::{
@@ -195,8 +195,12 @@ fn resolve_kind(element: &ParsedElement, registry: &Registry) -> Result<ElementK
         ParsedKind::Inductor { inductance } => ElementKind::Inductor {
             inductance: *inductance,
         },
-        ParsedKind::VoltageSource { dc } => ElementKind::VoltageSource { dc: *dc },
-        ParsedKind::CurrentSource { dc } => ElementKind::CurrentSource { dc: *dc },
+        ParsedKind::VoltageSource { waveform } => ElementKind::VoltageSource {
+            dc: value_at_zero(waveform),
+        },
+        ParsedKind::CurrentSource { waveform } => ElementKind::CurrentSource {
+            dc: value_at_zero(waveform),
+        },
         ParsedKind::Vcvs {
             control_positive,
             control_negative,
@@ -232,6 +236,15 @@ fn resolve_kind(element: &ParsedElement, registry: &Registry) -> Result<ElementK
             thermal_voltage: DEFAULT_THERMAL_VOLTAGE,
         },
     })
+}
+
+/// the source value at `t = 0`; `COS` is at its amplitude and `SIN` is zero
+fn value_at_zero(waveform: &ParsedWaveform) -> f64 {
+    match *waveform {
+        ParsedWaveform::Dc(value) => value,
+        ParsedWaveform::Cos { amplitude, .. } => amplitude,
+        ParsedWaveform::Sin { .. } => 0.0,
+    }
 }
 
 fn validate_parameters(element: &ParsedElement, kind: &ElementKind) -> Result<(), ElementError> {

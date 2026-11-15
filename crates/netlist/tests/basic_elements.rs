@@ -100,6 +100,33 @@ fn invalid_numbers_point_to_the_value_token() {
 }
 
 #[test]
+fn element_values_accept_scale_suffixes_and_units() {
+    let parsed =
+        parse("Suffixes\nR1 a 0 1k\nC1 a 0 100uF\nL1 a 0 2.5mH\nV1 a 0 DC 1.5V\n.end").unwrap();
+
+    let kinds: Vec<_> = parsed
+        .elements
+        .iter()
+        .map(|element| &element.kind)
+        .collect();
+
+    assert_eq!(
+        kinds,
+        vec![
+            &ParsedKind::Resistor { resistance: 1e3 },
+            &ParsedKind::Capacitor { capacitance: 1e-4 },
+            &ParsedKind::Inductor { inductance: 2.5e-3 },
+            &ParsedKind::VoltageSource { dc: 1.5 },
+        ]
+    );
+
+    let text = "Title\nR1 a 0 1k5\n.end";
+    let error = parse(text).unwrap_err();
+    assert_eq!(&text[error.span.range()], "1k5");
+    assert!(matches!(error.kind, ParseErrorKind::InvalidNumber { .. }));
+}
+
+#[test]
 fn rejects_unimplemented_elements_instead_of_dropping_them() {
     let error = parse("Title\nQ1 a 0 model\n.end").unwrap_err();
 

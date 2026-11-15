@@ -48,7 +48,10 @@ pub enum ParseErrorKind {
     #[error("expected the DC keyword, found {found:?}")]
     ExpectedDc { found: String },
 
-    #[error("expected a decimal or scientific-notation number, found {value:?}")]
+    #[error(
+        "expected a decimal or scientific-notation number with an optional scale \
+         suffix such as k or m, found {value:?}"
+    )]
     InvalidNumber { value: String },
 
     #[error("expected a finite number, found {value:?}")]

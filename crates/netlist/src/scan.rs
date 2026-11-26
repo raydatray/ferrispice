@@ -10,6 +10,8 @@ pub(crate) struct RawNetlist<'a> {
 #[derive(Debug)]
 pub(crate) enum RawRecord<'a> {
     Dc(NetlistPosition, ByteSpan),
+    /// `.tran tstop tstep`, with its tokens so values keep their spans
+    Tran(NetlistPosition, ByteSpan, Vec<Token<'a>>),
     Element(RawElement<'a>),
 }
 
@@ -95,6 +97,14 @@ fn parse_record<'a>(
         ".dc" => {
             require_fields(&tokens, 1, ".dc")?;
             Ok(Some(RawRecord::Dc(first.location, first.span)))
+        }
+        ".tran" => {
+            require_fields(&tokens, 3, ".tran tstop tstep")?;
+            Ok(Some(RawRecord::Tran(
+                first.location,
+                record_byte_span(&tokens),
+                tokens,
+            )))
         }
         directive if directive.starts_with('.') => Err(ParseError::new(
             first.location,
@@ -195,7 +205,12 @@ mod tests {
             assert_eq!(error.kind, ParseErrorKind::RecordAfterEnd);
             assert_eq!(error.location.line, 3);
         }
-        for text in ["Title\n.dc extra\n.end", "Title\n.end extra"] {
+        for text in [
+            "Title\n.dc extra\n.end",
+            "Title\n.end extra",
+            "Title\n.tran 1\n.end",
+            "Title\n.tran 1 2 3\n.end",
+        ] {
             assert!(matches!(
                 scan(text).unwrap_err().kind,
                 ParseErrorKind::WrongFieldCount { .. }
@@ -243,6 +258,7 @@ mod tests {
         for (text, expected) in [
             ("Title\n  .op\n.end", ".op"),
             ("Title\n.dc extra\n.end", ".dc extra"),
+            ("Title\n  .TRAN 1\n.end", ".TRAN 1"),
             ("Title\n.end\n  R1 a 0 1", "R1 a 0 1"),
         ] {
             let error = scan(text).unwrap_err();

@@ -45,6 +45,9 @@ pub enum ParseErrorKind {
         found: usize,
     },
 
+    #[error("a second .tran record; the first is at {first}")]
+    DuplicateTransient { first: NetlistPosition },
+
     #[error("expected the source mode DC, COS, or SIN, found {found:?}")]
     UnknownSourceMode { found: String },
 

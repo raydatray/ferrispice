@@ -147,6 +147,15 @@ impl NetlistDiagnostic {
                 };
                 (Some(error.span), error.kind.to_string(), first, None)
             }
+            NetlistCause::Circuit(CircuitError::Transient(error)) => (
+                Some(error.span),
+                error.kind.to_string(),
+                None,
+                Some(
+                    ".tran takes the stop time first, then the time step: .tran tstop tstep"
+                        .to_owned(),
+                ),
+            ),
             NetlistCause::Circuit(CircuitError::MissingGround) => (
                 None,
                 String::new(),

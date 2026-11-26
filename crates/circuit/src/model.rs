@@ -51,10 +51,10 @@ pub enum ElementKind {
         inductance: f64,
     },
     VoltageSource {
-        dc: f64,
+        waveform: Waveform,
     },
     CurrentSource {
-        dc: f64,
+        waveform: Waveform,
     },
     Vcvs {
         control_positive: NodeId,
@@ -78,6 +78,48 @@ pub enum ElementKind {
         saturation_current: f64,
         thermal_voltage: f64,
     },
+}
+
+/// the value of an independent source over time
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Waveform {
+    /// constant
+    Dc(f64),
+    /// `amplitude * cos(2π · frequency · t)`
+    Cos { amplitude: f64, frequency: f64 },
+    /// `amplitude * sin(2π · frequency · t)`
+    Sin { amplitude: f64, frequency: f64 },
+}
+
+impl Waveform {
+    /// the source value at time `t`, in seconds
+    pub fn value_at(&self, t: f64) -> f64 {
+        match *self {
+            Self::Dc(value) => value,
+            Self::Cos {
+                amplitude,
+                frequency,
+            } => amplitude * (std::f64::consts::TAU * frequency * t).cos(),
+            Self::Sin {
+                amplitude,
+                frequency,
+            } => amplitude * (std::f64::consts::TAU * frequency * t).sin(),
+        }
+    }
+
+    /// the value DC analysis uses: the value at `t = 0`, where a transient
+    /// analysis starts from the DC operating point
+    pub fn dc_value(&self) -> f64 {
+        self.value_at(0.0)
+    }
+
+    /// whether the value is the same at every time
+    pub fn is_constant(&self) -> bool {
+        match *self {
+            Self::Dc(_) => true,
+            Self::Cos { amplitude, .. } | Self::Sin { amplitude, .. } => amplitude == 0.0,
+        }
+    }
 }
 
 /// default saturation current `Is`, in amperes

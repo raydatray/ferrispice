@@ -166,11 +166,11 @@ pub fn assemble(circuit: &Circuit) -> Result<MnaSystem, AssemblyError> {
             ElementKind::Inductor { inductance } => {
                 stamps::passive::inductor(&mut builder, element, inductance)?
             }
-            ElementKind::CurrentSource { dc } => {
-                stamps::independent::current_source(&mut builder, element, dc)
+            ElementKind::CurrentSource { waveform } => {
+                stamps::independent::current_source(&mut builder, element, waveform.dc_value())
             }
-            ElementKind::VoltageSource { dc } => {
-                stamps::independent::voltage_source(&mut builder, element, dc)?
+            ElementKind::VoltageSource { waveform } => {
+                stamps::independent::voltage_source(&mut builder, element, waveform.dc_value())?
             }
             ElementKind::Vcvs {
                 control_positive,

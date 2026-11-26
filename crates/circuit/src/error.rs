@@ -8,6 +8,30 @@ pub enum CircuitError {
 
     #[error("no element terminal connects to ground node 0")]
     MissingGround,
+
+    #[error(transparent)]
+    Transient(#[from] TransientRequestError),
+}
+
+/// a `.tran` request whose times cannot describe a simulation
+#[derive(Clone, Debug, Error, PartialEq)]
+#[error("{location}: .tran: {kind}")]
+pub struct TransientRequestError {
+    pub location: NetlistPosition,
+    pub span: ByteSpan,
+    pub kind: TransientRequestErrorKind,
+}
+
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum TransientRequestErrorKind {
+    #[error("stop time must be positive, found {stop}")]
+    NonPositiveStop { stop: f64 },
+
+    #[error("time step must be positive, found {step}")]
+    NonPositiveStep { step: f64 },
+
+    #[error("time step {step} is longer than the stop time {stop}")]
+    StepExceedsStop { stop: f64, step: f64 },
 }
 
 #[derive(Clone, Debug, Error, PartialEq)]
@@ -32,6 +56,9 @@ pub enum ElementErrorKind {
 
     #[error("{parameter} must be finite, found {value}")]
     NonFiniteParameter { parameter: &'static str, value: f64 },
+
+    #[error("{parameter} must be positive, found {value}")]
+    NonPositiveParameter { parameter: &'static str, value: f64 },
 
     #[error("resistance must be nonzero")]
     ZeroResistance,

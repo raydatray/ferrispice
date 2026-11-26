@@ -1,7 +1,10 @@
 use ferrispice_circuit::{Circuit, CircuitError, ElementErrorKind};
 use ferrispice_mna::AssemblyError;
 use ferrispice_netlist::{ByteSpan, ParseError, ParseErrorKind};
-use ferrispice_solver::{DcError, NewtonErrorKind, SolveError, SourceSteppingFailure};
+use ferrispice_solver::{
+    DcError, NewtonError, NewtonErrorKind, SolveError, SourceSteppingFailure, TransientError,
+    TransientStepFailure,
+};
 use miette::{Diagnostic, NamedSource, SourceSpan};
 use thiserror::Error;
 
@@ -45,6 +48,22 @@ struct NonlinearDiagnostic {
     help: &'static str,
 }
 
+/// the diode whose equation overflowed, when that ended a Newton solve, with
+/// what went wrong; the circuit, not the solver, knows where it was declared
+fn failed_device(error: Option<&NewtonError>, circuit: &Circuit) -> (Option<SourceSpan>, String) {
+    let device = match error.map(|error| &error.kind) {
+        Some(NewtonErrorKind::Device { cause, .. }) => Some(cause),
+        _ => None,
+    };
+
+    (
+        device
+            .and_then(|device| circuit.element(device.id))
+            .map(|element| source_span(element.span)),
+        device.map_or_else(String::new, |device| device.cause.to_string()),
+    )
+}
+
 impl NonlinearDiagnostic {
     fn new(
         cause: Box<SourceSteppingFailure>,
@@ -52,17 +71,11 @@ impl NonlinearDiagnostic {
         input_name: String,
         contents: String,
     ) -> Self {
-        let device = match cause.stepping.last_failure().map(|error| &error.kind) {
-            Some(NewtonErrorKind::Device { cause, .. }) => Some(cause),
-            _ => None,
-        };
+        let (span, label) = failed_device(cause.stepping.last_failure(), circuit);
 
         Self {
-            // the circuit, not the solver, knows where each element was declared
-            span: device
-                .and_then(|device| circuit.element(device.id))
-                .map(|element| source_span(element.span)),
-            label: device.map_or_else(String::new, |device| device.cause.to_string()),
+            span,
+            label,
             input: NamedSource::new(input_name.clone(), contents),
             input_name,
             cause,
@@ -100,6 +113,76 @@ pub(crate) fn analysis(
             })
         }
     }
+}
+
+/// a backward-Euler step failed; the operating point before it was found
+#[derive(Debug, Error, Diagnostic)]
+#[error("{input_name}: transient analysis failed at t = {time} s")]
+struct TransientDiagnostic {
+    input_name: String,
+    time: f64,
+    #[source]
+    cause: TransientCause,
+    #[source_code]
+    input: NamedSource<String>,
+    #[label("{label}")]
+    span: Option<SourceSpan>,
+    label: String,
+    #[help]
+    help: &'static str,
+}
+
+#[derive(Debug, Error)]
+enum TransientCause {
+    #[error(transparent)]
+    Linear(SolveError),
+
+    #[error(transparent)]
+    Step(Box<TransientStepFailure>),
+}
+
+pub(crate) fn transient(
+    error: TransientError,
+    circuit: &Circuit,
+    input_name: String,
+    contents: String,
+) -> miette::Report {
+    let (time, cause, span, label, help) = match error {
+        // the initial state is a DC operating point, and fails like one
+        TransientError::OperatingPoint(error) => {
+            return analysis(error, circuit, input_name, contents);
+        }
+        TransientError::Singular { time, source } => (
+            time,
+            TransientCause::Linear(source),
+            None,
+            String::new(),
+            "G + C/h does not determine every unknown. a loop of voltage sources, or \
+             current sources in series, can cause this.",
+        ),
+        TransientError::Step { time, failure } => {
+            let (span, label) = failed_device(failure.stepping.last_failure(), circuit);
+            (
+                time,
+                TransientCause::Step(failure),
+                span,
+                label,
+                "Newton-Raphson did not converge for a time step, even after dividing the \
+                 step into smaller ones. a smaller .tran step may help, as may checking for \
+                 current forced backwards through a diode.",
+            )
+        }
+    };
+
+    miette::Report::new(TransientDiagnostic {
+        input: NamedSource::new(input_name.clone(), contents),
+        input_name,
+        time,
+        cause,
+        span,
+        label,
+        help,
+    })
 }
 
 #[derive(Debug, Error, Diagnostic)]
@@ -308,5 +391,49 @@ mod tests {
         let diagnostic = NetlistDiagnostic::new(error.into(), "empty.cir".into(), String::new());
         let output = render(&diagnostic);
         assert!(output.contains("missing the first-line circuit title"));
+    }
+
+    #[test]
+    fn renders_invalid_transient_times_on_the_tran_record() {
+        let text = "Times\nR1 a 0 1\n.tran 1m 2m\n.end\n";
+        let parsed = ferrispice_netlist::parse(text).unwrap();
+        let error = ferrispice_circuit::compile(&parsed).unwrap_err();
+        let diagnostic = NetlistDiagnostic::new(error.into(), "times.cir".into(), text.into());
+        let labels: Vec<_> = diagnostic.labels().unwrap().collect();
+        assert_eq!(
+            &text[labels[0].offset()..labels[0].offset() + labels[0].len()],
+            ".tran 1m 2m"
+        );
+        let output = render(&diagnostic);
+        assert!(output.contains("is longer than the stop time"), "{output}");
+        assert!(output.contains(".tran tstop tstep"), "{output}");
+    }
+
+    #[test]
+    fn renders_a_transient_step_failure_with_its_time() {
+        let text = "Rectifier\nVin n1 0 COS 1 60\nD1 n1 n2\nR1 n2 0 50\nC1 n2 0 100u\n.end\n";
+        let circuit =
+            ferrispice_circuit::compile(&ferrispice_netlist::parse(text).unwrap()).unwrap();
+        let options = ferrispice_solver::TransientOptions {
+            newton: ferrispice_solver::NewtonOptions {
+                max_iterations: 0,
+                ..Default::default()
+            },
+        };
+        let error =
+            ferrispice_solver::solve_transient_with(&circuit, 1e-3, 1e-4, &options).unwrap_err();
+        let report = transient(error, &circuit, "rectifier.cir".into(), text.into());
+
+        let mut output = String::new();
+        GraphicalReportHandler::new()
+            .with_theme(GraphicalTheme::unicode_nocolor())
+            .render_report(&mut output, report.as_ref())
+            .unwrap();
+        assert!(
+            output.contains("rectifier.cir: transient analysis failed at t = 0 s"),
+            "{output}"
+        );
+        assert!(output.contains("subdividing it stopped"), "{output}");
+        assert!(output.contains("smaller .tran step"), "{output}");
     }
 }

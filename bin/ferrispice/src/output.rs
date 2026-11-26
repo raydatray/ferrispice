@@ -2,7 +2,7 @@ use ferrispice_circuit::{Circuit, ElementKind, Waveform};
 use ferrispice_mna::{MnaSystem, NonlinearDevice, TermSign, UnknownKind, UnknownLayout};
 use ferrispice_solver::{
     DcMethod, DcSolution, NewtonError, NewtonIteration, NewtonSolution, SourceSteppingFailure,
-    StepAttempt,
+    StepAttempt, TransientSolution,
 };
 use miette::{IntoDiagnostic, WrapErr};
 use nalgebra::{DMatrix, DVector};
@@ -33,7 +33,10 @@ pub(crate) fn print_validation(circuit: &Circuit, layout: &UnknownLayout) {
         circuit.elements().len(),
         layout.len(),
     );
-    println!("no analysis requested; add .dc to run DC analysis");
+    println!(
+        "no analysis requested; add .dc to run DC analysis or .tran tstop tstep to run a \
+         transient analysis"
+    );
 }
 
 pub(crate) fn print_solution(circuit: &Circuit, solution: &DcSolution) -> miette::Result<()> {
@@ -69,6 +72,141 @@ pub(crate) fn print_solution(circuit: &Circuit, solution: &DcSolution) -> miette
     };
 
     print_panel(title, &lines.join("\n"))
+}
+
+/// a transient analysis summarized: the time grid, how each step was solved,
+/// and each unknown's range; the waveforms themselves go to files
+pub(crate) fn print_transient(
+    circuit: &Circuit,
+    solution: &TransientSolution,
+    stop: f64,
+    step: f64,
+) -> miette::Result<()> {
+    let stats = solution.stats();
+    let plural =
+        |count: usize, word: &str| format!("{count} {word}{}", if count == 1 { "" } else { "s" });
+
+    let mut lines = vec![
+        circuit.title().to_owned(),
+        String::new(),
+        format!(
+            "0 s to {}, step {}, {}",
+            seconds(stop),
+            seconds(step),
+            plural(solution.times().len(), "point")
+        ),
+        "initial state: DC operating point".to_owned(),
+    ];
+
+    if solution.operating_point().is_nonlinear() {
+        lines.push(format!(
+            "{} Newton iteration{} over {} (max {} per step)",
+            thousands(stats.newton_iterations),
+            if stats.newton_iterations == 1 {
+                ""
+            } else {
+                "s"
+            },
+            plural(stats.steps, "step"),
+            stats.max_step_iterations,
+        ));
+        if stats.subdivided_steps > 0 {
+            lines.push(format!(
+                "Newton failed on {}, which were subdivided: {} accepted, {} rejected",
+                plural(stats.subdivided_steps, "whole step"),
+                plural(stats.substeps, "intermediate point"),
+                stats.rejected_substeps,
+            ));
+        }
+    } else {
+        lines.push(match stats.factorizations {
+            1 => "linear: G + C/h factored once".to_owned(),
+            count => format!("linear: G + C/h factored {count} times, once per step size"),
+        });
+    }
+
+    let rows: Vec<[String; 4]> = solution
+        .columns()
+        .map(|(unknown, values)| {
+            let unit = match unknown.kind {
+                UnknownKind::NodeVoltage(_) => "V",
+                UnknownKind::BranchCurrent(_) => "A",
+            };
+            let minimum = values.iter().copied().fold(f64::INFINITY, f64::min);
+            let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let last = values.last().copied().unwrap_or(0.0);
+            [
+                unknown.label.clone(),
+                format!("{} {unit}", number(minimum)),
+                format!("{} {unit}", number(maximum)),
+                format!("{} {unit}", number(last)),
+            ]
+        })
+        .collect();
+
+    if !rows.is_empty() {
+        let header = [
+            String::new(),
+            "min".to_owned(),
+            "max".to_owned(),
+            "final".to_owned(),
+        ];
+        let widths: Vec<_> = (0..4)
+            .map(|column| {
+                rows.iter()
+                    .chain([&header])
+                    .map(|row| text_width(&row[column]))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect();
+        lines.push(String::new());
+        for row in [&header].into_iter().chain(&rows) {
+            let cells: Vec<_> = row
+                .iter()
+                .enumerate()
+                .map(|(column, cell)| {
+                    let padding = " ".repeat(widths[column] - text_width(cell));
+                    if column == 0 {
+                        format!("{cell}{padding}")
+                    } else {
+                        format!("{padding}{cell}")
+                    }
+                })
+                .collect();
+            lines.push(cells.join("  ").trim_end().to_owned());
+        }
+    }
+
+    print_panel("transient analysis (backward Euler)", &lines.join("\n"))
+}
+
+/// a time in seconds, with a prefix that keeps small steps readable
+fn seconds(value: f64) -> String {
+    let magnitude = value.abs();
+    let (scale, unit) = if magnitude == 0.0 || magnitude >= 1e-3 {
+        (1.0, "s")
+    } else if magnitude >= 1e-4 {
+        (1e3, "ms")
+    } else if magnitude >= 1e-7 {
+        (1e6, "µs")
+    } else {
+        (1e9, "ns")
+    };
+    format!("{} {unit}", number(value * scale))
+}
+
+/// a count with comma-separated thousands
+fn thousands(count: usize) -> String {
+    let digits = count.to_string();
+    let mut grouped = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
 }
 
 /// how Newton-Raphson reached the operating point
@@ -734,7 +872,32 @@ fn trim_fraction(mut number: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{number, render_panel, text_width};
+    use super::{number, render_panel, seconds, text_width, thousands};
+
+    #[test]
+    fn times_and_counts_are_readable() {
+        for (value, expected) in [
+            (0.0, "0 s"),
+            (0.05, "0.05 s"),
+            (1.0, "1 s"),
+            (1e-3, "0.001 s"),
+            (1e-4, "0.1 ms"),
+            (5e-5, "50 µs"),
+            (2.5e-6, "2.5 µs"),
+            (5e-7, "0.5 µs"),
+            (1e-10, "0.1 ns"),
+        ] {
+            assert_eq!(seconds(value), expected, "{value}");
+        }
+        for (count, expected) in [
+            (0, "0"),
+            (999, "999"),
+            (1335, "1,335"),
+            (1234567, "1,234,567"),
+        ] {
+            assert_eq!(thousands(count), expected);
+        }
+    }
 
     #[test]
     fn panels_draw_a_rounded_titled_border_with_padding() {

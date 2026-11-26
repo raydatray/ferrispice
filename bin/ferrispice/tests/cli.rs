@@ -1010,3 +1010,157 @@ fn help_succeeds_and_invalid_arguments_fail() {
         assert_usage(&output.stderr);
     }
 }
+
+/// `(min, max, final)` of an unknown in the transient summary
+fn summary_row(stdout: &str, label: &str) -> [f64; 3] {
+    let line = stdout
+        .lines()
+        .skip_while(|line| *line != "transient analysis (backward Euler)")
+        .find(|line| line.split_whitespace().next() == Some(label))
+        .unwrap_or_else(|| panic!("{label}\n{stdout}"));
+    let values: Vec<f64> = line
+        .split_whitespace()
+        .skip(1)
+        .step_by(2)
+        .map(|value| value.parse().unwrap())
+        .collect();
+    values.try_into().unwrap()
+}
+
+fn run_with(text: &str, flags: &[&str]) -> Output {
+    let input = Input::new(text);
+    let mut arguments = vec![input.path.as_os_str()];
+    arguments.extend(flags.iter().map(OsStr::new));
+    run(&arguments)
+}
+
+#[test]
+fn summarizes_the_handout_transient() {
+    let stdout = success(RECTIFIER);
+    let lines: Vec<_> = stdout.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| *line == "transient analysis (backward Euler)")
+        .unwrap_or_else(|| panic!("{stdout}"));
+    assert_eq!(lines[start + 2], "* a half-wave recitifier circuit");
+    for line in [
+        "0 s to 0.05 s, step 0.1 ms, 501 points",
+        "initial state: DC operating point",
+    ] {
+        assert!(lines.contains(&line), "{line}\n{stdout}");
+    }
+    let newton = lines
+        .iter()
+        .find(|line| line.contains("Newton iterations over 500 steps (max "))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    assert!(newton.ends_with(" per step)"), "{newton}");
+    assert!(!stdout.contains("subdivided"), "{stdout}");
+
+    let [min, max, last] = summary_row(&stdout, "V(n1)");
+    assert_eq!((min, max, last), (-1.0, 1.0, 1.0));
+    let [min, max, last] = summary_row(&stdout, "V(n2)");
+    assert!((min - 0.0173039).abs() < 1e-7, "{min}");
+    assert!((max - 0.267314).abs() < 1e-6, "{max}");
+    assert!((last - 0.255129).abs() < 1e-6, "{last}");
+    summary_row(&stdout, "I(Vin)");
+
+    // waveforms are not printed, and there is no DC panel without `.dc`
+    assert!(results(&stdout).is_empty(), "{stdout}");
+    assert!(!stdout.contains("DC analysis"), "{stdout}");
+}
+
+#[test]
+fn linear_transients_report_one_factorization() {
+    let stdout = success("RC\nVin a 0 COS 1 100\nR1 a b 1k\nC1 b 0 1u\n.tran 10m 0.1m\n.end\n");
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == "linear: G + C/h factored once"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("Newton"), "{stdout}");
+
+    let stdout = success("RC\nVin a 0 COS 1 100\nR1 a b 1k\nC1 b 0 1u\n.tran 1m 0.3m\n.end\n");
+    assert!(
+        stdout.contains("0 s to 0.001 s, step 0.3 ms, 5 points"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("linear: G + C/h factored 2 times, once per step size"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn dc_and_tran_together_run_dc_first() {
+    let stdout = success(&RECTIFIER.replace(".end", ".dc\n.end"));
+    let position = |text: &str| {
+        stdout
+            .find(text)
+            .unwrap_or_else(|| panic!("{text}\n{stdout}"))
+    };
+    assert!(position("nonlinear DC analysis") < position("transient analysis (backward Euler)"));
+    assert_results(&stdout, &[("V(n1)", 1.0)]);
+}
+
+#[test]
+fn operating_point_flags_describe_the_initial_state() {
+    let output = run_with(RECTIFIER, &["--trace-newton", "--dump-lu"]);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    let position = |text: &str| {
+        stdout
+            .find(text)
+            .unwrap_or_else(|| panic!("{text}\n{stdout}"))
+    };
+    assert!(position("Newton trace") < position("transient analysis (backward Euler)"));
+    assert!(position("direct Newton on the full circuit, from x = 0: converged") > 0);
+    assert!(
+        position("LU decomposition of J = G + ∂f/∂x at the operating point")
+            < position("transient analysis (backward Euler)")
+    );
+
+    // with `.dc` too, they are printed once
+    let output = run_with(
+        &RECTIFIER.replace(".end", ".dc\n.end"),
+        &["--trace-newton", "--dump-mna"],
+    );
+    let stdout = output_text(output.stdout);
+    assert_eq!(stdout.matches("Newton trace").count(), 1, "{stdout}");
+    assert_eq!(stdout.matches("f(x*):").count(), 1, "{stdout}");
+}
+
+#[test]
+fn a_transient_without_an_operating_point_fails_with_its_cause() {
+    // node b connects only through a capacitor, which is open at DC
+    let input = Input::new("Open\nVin a 0 COS 1 60\nR1 a 0 1k\nC1 a b 1u\n.tran 1m 0.1m\n.end\n");
+    let output = run(&[input.path.as_os_str()]);
+    assert!(!output.status.success());
+    let stdout = output_text(output.stdout);
+    assert!(!stdout.contains("transient analysis"), "{stdout}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("linear DC analysis failed"), "{stderr}");
+    assert!(stderr.contains("singular"), "{stderr}");
+}
+
+#[test]
+fn invalid_transient_requests_highlight_the_record() {
+    for (record, message) in [
+        (".tran 0 1m", "stop time must be positive"),
+        (".tran 1m 2m", "is longer than the stop time"),
+        (".tran 1m", "expected .tran tstop tstep; found 2 fields"),
+        (".tran 1m 1x5", "found \"1x5\""),
+    ] {
+        let input = Input::new(&format!("Times\nR1 a 0 1\n{record}\n.end\n"));
+        let output = run(&[input.path.as_os_str()]);
+        assert!(!output.status.success(), "{record}");
+        assert!(output.stdout.is_empty(), "{record}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains(message), "{record}\n{stderr}");
+        assert!(stderr.contains(record), "{record}\n{stderr}");
+    }
+
+    let input = Input::new("Twice\nR1 a 0 1\n.tran 1 0.1\n.tran 2 0.1\n.end\n");
+    let stderr = String::from_utf8(run(&[input.path.as_os_str()]).stderr).unwrap();
+    assert!(stderr.contains("a second .tran record"), "{stderr}");
+}

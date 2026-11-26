@@ -2,7 +2,10 @@ mod common;
 
 use common::circuit;
 use ferrispice_circuit::Circuit;
-use ferrispice_solver::{DcError, TransientError, TransientSolution, solve_transient};
+use ferrispice_solver::{
+    DcError, NewtonErrorKind, NewtonOptions, TransientError, TransientOptions, TransientSolution,
+    solve_transient, solve_transient_with,
+};
 
 fn transient(records: &str, stop: f64, step: f64) -> (Circuit, TransientSolution) {
     let circuit = circuit(records);
@@ -153,4 +156,76 @@ fn nonlinear_circuits_take_a_newton_solve_at_every_step() {
         assert!((voltage(&circuit, &solution, "n1")[n] - vin).abs() < 1e-9);
         assert!(n2[n] > 0.0 && n2[n] < 0.3, "t = {time}: {}", n2[n]);
     }
+}
+
+fn limited(max_iterations: usize) -> TransientOptions {
+    TransientOptions {
+        newton: NewtonOptions {
+            max_iterations,
+            ..NewtonOptions::default()
+        },
+    }
+}
+
+#[test]
+fn steps_where_newton_fails_are_subdivided() {
+    // the handout needs up to 5 iterations per step; with 4, a few steps fail
+    // whole and converge in halves
+    let circuit = circuit(RECTIFIER);
+    let solution = solve_transient_with(&circuit, 0.05, 1e-4, &limited(4)).unwrap();
+    let stats = solution.stats();
+    assert!(stats.subdivided_steps > 0, "{stats:?}");
+    assert!(stats.substeps >= stats.subdivided_steps, "{stats:?}");
+
+    // intermediate points are not recorded
+    assert_eq!(solution.times().len(), 501);
+    let reference = solve_transient(&circuit, 0.05, 1e-4).unwrap();
+    assert_eq!(solution.times(), reference.times());
+    let n2 = voltage(&circuit, &solution, "n2");
+    let expected = voltage(&circuit, &reference, "n2");
+    for (n, (&actual, &expected)) in n2.iter().zip(&expected).enumerate() {
+        assert!(
+            (actual - expected).abs() < 5e-3,
+            "{n}: {actual} vs {expected}"
+        );
+    }
+}
+
+#[test]
+fn a_step_that_cannot_be_subdivided_reports_where_it_stopped() {
+    let circuit = circuit(RECTIFIER);
+    let error = solve_transient_with(&circuit, 0.05, 1e-4, &limited(0)).unwrap_err();
+    let TransientError::Step { time, failure } = error else {
+        panic!("expected a step failure, found {error:?}");
+    };
+
+    assert_eq!(time, 0.0);
+    assert_eq!((failure.from, failure.to), (0.0, 1e-4));
+    assert!(matches!(
+        failure.direct.kind,
+        NewtonErrorKind::NonConvergence { .. }
+    ));
+    assert_eq!(failure.stepping.reached, 0.0);
+    assert!(failure.stepping.step < 1e-4 * 1e-9);
+    assert!(
+        failure
+            .stepping
+            .attempts
+            .iter()
+            .all(|attempt| !attempt.accepted())
+    );
+    assert!(
+        failure
+            .to_string()
+            .contains("subdividing it stopped at t = 0 s")
+    );
+}
+
+#[test]
+fn the_handout_converges_without_subdividing() {
+    let (_, solution) = transient(RECTIFIER, 0.05, 1e-4);
+    let stats = solution.stats();
+    assert_eq!(stats.subdivided_steps, 0, "{stats:?}");
+    assert_eq!(stats.substeps, 0, "{stats:?}");
+    assert_eq!(stats.rejected_substeps, 0, "{stats:?}");
 }

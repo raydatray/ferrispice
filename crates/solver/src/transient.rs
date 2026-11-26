@@ -6,8 +6,8 @@ use thiserror::Error;
 use crate::dc::{element_current as dc_element_current, node_voltage};
 use crate::linear::LuFactors;
 use crate::{
-    DcError, DcSolution, NewtonError, NewtonOptions, NewtonProblem, SolveError, solve_dc,
-    solve_newton,
+    DcError, DcSolution, NewtonError, NewtonOptions, NewtonProblem, NewtonSolution, SolveError,
+    StepOptions, SteppingError, advance, solve_dc, solve_newton,
 };
 
 /// a step count within this relative distance of an integer is that integer,
@@ -29,13 +29,37 @@ pub enum TransientError {
         source: SolveError,
     },
 
-    /// Newton-Raphson did not converge for a step of a nonlinear circuit
-    #[error("Newton-Raphson did not converge for the backward-Euler step to t = {time} s")]
-    Newton {
+    /// Newton-Raphson failed for a step of a nonlinear circuit, and
+    /// subdividing the step could not get past `time`
+    #[error("backward Euler could not advance past t = {time} s")]
+    Step {
         time: f64,
         #[source]
-        source: NewtonError,
+        failure: Box<TransientStepFailure>,
     },
+}
+
+/// Newton failed on a whole step, and subdividing it did not reach its end
+#[derive(Clone, Debug, Error, PartialEq)]
+#[error(
+    "Newton-Raphson failed for the step from t = {from} s to t = {to} s, and subdividing it \
+     stopped at t = {} s: {}",
+    stepping.reached,
+    stepping.last_failure().map_or_else(|| direct.to_string(), ToString::to_string)
+)]
+pub struct TransientStepFailure {
+    pub from: f64,
+    pub to: f64,
+    /// failure of Newton on the whole step
+    pub direct: NewtonError,
+    /// every subdivision attempt; the last one is the final failure
+    pub stepping: SteppingError<NewtonSolution, NewtonError>,
+}
+
+/// how each Newton solve of a nonlinear circuit iterates
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TransientOptions {
+    pub newton: NewtonOptions,
 }
 
 /// what a transient analysis did
@@ -49,8 +73,16 @@ pub struct TransientStats {
     pub factorizations: usize,
     /// Newton iterations across every step; zero for a linear circuit
     pub newton_iterations: usize,
-    /// the most Newton iterations any one step took
+    /// the most Newton iterations any one step took, including the attempts
+    /// of a subdivided step
     pub max_step_iterations: usize,
+    /// steps whose Newton solve failed and were subdivided
+    pub subdivided_steps: usize,
+    /// intermediate points accepted inside subdivided steps; they are not
+    /// part of the waveform
+    pub substeps: usize,
+    /// attempts rejected inside subdivided steps
+    pub rejected_substeps: usize,
 }
 
 impl TransientStats {
@@ -148,6 +180,23 @@ pub fn solve_transient(
     stop: f64,
     step: f64,
 ) -> Result<TransientSolution, TransientError> {
+    solve_transient_with(circuit, stop, step, &TransientOptions::default())
+}
+
+/// `solve_transient` with explicit Newton options for nonlinear circuits
+///
+/// a Newton solve that fails for a whole step is retried by subdividing the
+/// step adaptively; only the end of the step is recorded
+///
+/// # Panics
+///
+/// as `solve_transient`
+pub fn solve_transient_with(
+    circuit: &Circuit,
+    stop: f64,
+    step: f64,
+    options: &TransientOptions,
+) -> Result<TransientSolution, TransientError> {
     assert!(
         stop.is_finite() && step.is_finite() && step > 0.0 && step <= stop,
         "transient times must satisfy 0 < step <= stop"
@@ -167,7 +216,7 @@ pub fn solve_transient(
     let states = if system.is_linear() {
         integrate_linear(&system, &grid, initial, &mut stats)?
     } else {
-        integrate_nonlinear(&system, &grid, initial, &mut stats)?
+        integrate_nonlinear(&system, &grid, initial, &options.newton, &mut stats)?
     };
 
     tracing::debug!(points = grid.times.len(), "integrated transient");
@@ -292,15 +341,15 @@ fn integrate_nonlinear(
     system: &MnaSystem,
     grid: &TimeGrid,
     initial: DVector<f64>,
+    options: &NewtonOptions,
     stats: &mut TransientStats,
 ) -> Result<Vec<DVector<f64>>, TransientError> {
-    let options = NewtonOptions::default();
     let mut states = Vec::with_capacity(grid.times.len());
     states.push(initial);
     let mut companion: Option<Companion> = None;
 
     for (n, &step) in grid.steps.iter().enumerate() {
-        let time = grid.times[n + 1];
+        let (from, to) = (grid.times[n], grid.times[n + 1]);
 
         if companion
             .as_ref()
@@ -310,20 +359,95 @@ fn integrate_nonlinear(
         }
         let companion = companion.as_ref().expect("formed above");
 
-        let r = companion.rhs(system, time, &states[n]);
-        let problem = NewtonProblem {
-            system,
-            a: &companion.a,
-            r: &r,
+        let direct = match solve_step(system, companion, to, &states[n], options) {
+            Ok(solution) => {
+                stats.record_step(solution.iterations.len());
+                states.push(solution.x);
+                continue;
+            }
+            Err(error) => error,
         };
-        let solution = solve_newton(&problem, &states[n], &options)
-            .map_err(|source| TransientError::Newton { time, source })?;
 
-        stats.record_step(solution.iterations.len());
-        states.push(solution.x);
+        tracing::debug!(from, to, %direct, "Newton failed for a whole step; subdividing it");
+        let x = subdivide(system, from, to, &states[n], direct, options, stats)?;
+        states.push(x);
     }
 
     Ok(states)
+}
+
+/// Newton on one backward-Euler step, from the previous point
+fn solve_step(
+    system: &MnaSystem,
+    companion: &Companion,
+    time: f64,
+    previous: &DVector<f64>,
+    options: &NewtonOptions,
+) -> Result<NewtonSolution, NewtonError> {
+    let r = companion.rhs(system, time, previous);
+    let problem = NewtonProblem {
+        system,
+        a: &companion.a,
+        r: &r,
+    };
+    solve_newton(&problem, previous, options)
+}
+
+/// cross `[from, to]` in adaptive substeps, each a backward-Euler step of its
+/// own length
+fn subdivide(
+    system: &MnaSystem,
+    from: f64,
+    to: f64,
+    previous: &DVector<f64>,
+    direct: NewtonError,
+    options: &NewtonOptions,
+    stats: &mut TransientStats,
+) -> Result<DVector<f64>, TransientError> {
+    let step = to - from;
+    let substeps = StepOptions {
+        initial_step: step / 2.0,
+        min_step: step * 1e-9,
+        max_step: Some(step),
+    };
+    let start = NewtonSolution {
+        x: previous.clone(),
+        iterations: Vec::new(),
+        jacobian: DMatrix::zeros(0, 0),
+    };
+
+    let outcome = advance(from, to, start, &substeps, |from, to, state| {
+        let companion = Companion::new(system, to - from);
+        solve_step(system, &companion, to, &state.x, options)
+    });
+
+    match outcome {
+        Ok(stepping) => {
+            let iterations = direct.iterations.len()
+                + stepping
+                    .attempts
+                    .iter()
+                    .map(|attempt| match &attempt.outcome {
+                        Ok(solution) => solution.iterations.len(),
+                        Err(error) => error.iterations.len(),
+                    })
+                    .sum::<usize>();
+            stats.record_step(iterations);
+            stats.subdivided_steps += 1;
+            stats.substeps += stepping.accepted().count() - 1;
+            stats.rejected_substeps += stepping.rejected();
+            Ok(stepping.state.x)
+        }
+        Err(stepping) => Err(TransientError::Step {
+            time: stepping.reached,
+            failure: Box::new(TransientStepFailure {
+                from,
+                to,
+                direct,
+                stepping,
+            }),
+        }),
+    }
 }
 
 /// every element's current at every time point

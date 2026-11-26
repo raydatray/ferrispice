@@ -11,4 +11,7 @@ pub use newton::{
     solve_newton,
 };
 pub use stepping::{StepAttempt, StepOptions, SteppingError, SteppingOutcome, advance};
-pub use transient::{TransientError, TransientSolution, TransientStats, solve_transient};
+pub use transient::{
+    TransientError, TransientOptions, TransientSolution, TransientStats, TransientStepFailure,
+    solve_transient, solve_transient_with,
+};

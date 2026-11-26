@@ -1242,3 +1242,107 @@ fn unwritable_csv_paths_are_reported() {
     assert!(stderr.contains("could not write CSV"), "{stderr}");
     assert!(stderr.contains("hwr.csv"), "{stderr}");
 }
+
+#[test]
+fn plots_node_voltages_to_svg() {
+    let input = Input::new(RECTIFIER);
+    let svg = input.directory.join("plots/hwr.svg");
+    let csv = input.directory.join("hwr.csv");
+    let output = run(&[
+        input.path.as_os_str(),
+        OsStr::new("--plot"),
+        svg.as_os_str(),
+        OsStr::new("--csv"),
+        csv.as_os_str(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    let wrote_csv = format!("wrote {}", csv.display());
+    let wrote_svg = format!("wrote {}", svg.display());
+    assert!(
+        stdout.find(&wrote_csv).unwrap() < stdout.find(&wrote_svg).unwrap(),
+        "{stdout}"
+    );
+
+    let text = std::fs::read_to_string(&svg).unwrap();
+    assert!(text.starts_with("<svg"), "{text}");
+    for label in [
+        "Node voltages: a half-wave recitifier circuit",
+        "Time [s]",
+        "Voltage [V]",
+        "V(n1)",
+        "V(n2)",
+    ] {
+        assert!(text.contains(label), "missing {label}");
+    }
+}
+
+#[test]
+fn plot_nodes_restrict_the_plot() {
+    let input = Input::new(RECTIFIER);
+    let svg = input.directory.join("n2.svg");
+    let output = run(&[
+        input.path.as_os_str(),
+        OsStr::new("--plot"),
+        svg.as_os_str(),
+        OsStr::new("--plot-nodes"),
+        OsStr::new("N2"),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let text = std::fs::read_to_string(&svg).unwrap();
+    assert!(text.contains("V(n2)"));
+    assert!(!text.contains("V(n1)"));
+}
+
+#[test]
+fn unknown_plot_nodes_list_the_available_nodes() {
+    let input = Input::new(RECTIFIER);
+    let svg = input.directory.join("bad.svg");
+    let output = run(&[
+        input.path.as_os_str(),
+        OsStr::new("--plot"),
+        svg.as_os_str(),
+        OsStr::new("--plot-nodes"),
+        OsStr::new("n2,out,n9"),
+    ]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!svg.exists());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let words = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains("--plot-nodes names nodes not in the circuit: out, n9"),
+        "{stderr}"
+    );
+    assert!(
+        words.contains("the circuit's nodes are: n1, n2"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn plot_flags_need_a_transient_and_a_plot() {
+    let input = Input::new(DIVIDER);
+    let svg = input.directory.join("divider.svg");
+    let output = run(&[
+        input.path.as_os_str(),
+        OsStr::new("--plot"),
+        svg.as_os_str(),
+    ]);
+    assert!(!output.status.success());
+    assert!(!svg.exists());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--plot writes transient waveforms"),
+        "{stderr}"
+    );
+
+    // --plot-nodes alone is a usage error
+    let output = run(&[
+        input.path.as_os_str(),
+        OsStr::new("--plot-nodes"),
+        OsStr::new("n1"),
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_usage(&output.stderr);
+}

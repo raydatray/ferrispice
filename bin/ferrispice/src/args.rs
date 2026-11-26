@@ -35,6 +35,15 @@ pub(crate) struct Args {
     /// needs .tran in the netlist
     #[arg(long, value_name = "path")]
     pub csv: Option<PathBuf>,
+
+    /// plot node voltages against time to an SVG file; needs .tran in the
+    /// netlist
+    #[arg(long, value_name = "path")]
+    pub plot: Option<PathBuf>,
+
+    /// plot only these comma-separated nodes instead of every non-ground node
+    #[arg(long, value_name = "nodes", value_delimiter = ',', requires = "plot")]
+    pub plot_nodes: Option<Vec<String>>,
 }
 
 impl Args {
@@ -43,6 +52,9 @@ impl Args {
         let mut flags = Vec::new();
         if self.csv.is_some() {
             flags.push("--csv");
+        }
+        if self.plot.is_some() {
+            flags.push("--plot");
         }
         flags
     }
@@ -99,6 +111,23 @@ mod tests {
                 .transient_outputs()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn plot_nodes_are_comma_separated_and_need_a_plot() {
+        let args = parse_strs(&["a.cir", "--plot", "hwr.svg", "--plot-nodes", "n1,n2"]).unwrap();
+        assert_eq!(args.plot, Some(PathBuf::from("hwr.svg")));
+        assert_eq!(
+            args.plot_nodes,
+            Some(vec!["n1".to_owned(), "n2".to_owned()])
+        );
+        assert_eq!(args.transient_outputs(), ["--plot"]);
+
+        let args = parse_strs(&["a.cir", "--csv", "a.csv", "--plot", "a.svg"]).unwrap();
+        assert_eq!(args.transient_outputs(), ["--csv", "--plot"]);
+        assert!(args.plot_nodes.is_none());
+
+        assert!(parse_strs(&["a.cir", "--plot-nodes", "n1"]).is_err());
     }
 
     #[test]

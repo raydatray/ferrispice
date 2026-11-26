@@ -12,6 +12,7 @@ ferrispice-mna = { path = "../../crates/mna" }
 ferrispice-solver = { path = "../../crates/solver" }
 miette.workspace = true
 nalgebra.workspace = true
+plotters.workspace = true
 terminal_size.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

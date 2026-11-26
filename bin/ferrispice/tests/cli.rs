@@ -1164,3 +1164,81 @@ fn invalid_transient_requests_highlight_the_record() {
     let stderr = String::from_utf8(run(&[input.path.as_os_str()]).stderr).unwrap();
     assert!(stderr.contains("a second .tran record"), "{stderr}");
 }
+
+/// header and rows of a CSV file written by `--csv`
+fn read_csv(path: &std::path::Path) -> (Vec<String>, Vec<Vec<f64>>) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut lines = text.lines();
+    let header = lines
+        .next()
+        .unwrap()
+        .split(',')
+        .map(str::to_owned)
+        .collect();
+    let rows = lines
+        .map(|line| {
+            line.split(',')
+                .map(|value| value.parse().unwrap())
+                .collect()
+        })
+        .collect();
+    (header, rows)
+}
+
+#[test]
+fn csv_holds_every_unknown_at_every_point_at_full_precision() {
+    let input = Input::new(RECTIFIER);
+    let csv = input.directory.join("nested/out/hwr.csv");
+    let output = run(&[input.path.as_os_str(), OsStr::new("--csv"), csv.as_os_str()]);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+    assert!(
+        stdout.contains(&format!("wrote {}", csv.display())),
+        "{stdout}"
+    );
+
+    let (header, rows) = read_csv(&csv);
+    assert_eq!(header, ["time", "V(n1)", "V(n2)", "I(Vin)"]);
+    assert_eq!(rows.len(), 501);
+    assert!(rows.iter().all(|row| row.len() == 4));
+    assert_eq!(rows[0][..2], [0.0, 1.0]);
+    assert_eq!(rows[500][0], 0.05);
+    // more digits than the six printed in the terminal
+    assert!((rows[0][2] - 0.267314).abs() < 1e-6 && rows[0][2] != 0.267314);
+    assert!((rows[500][2] - 0.255129).abs() < 1e-6);
+    for row in &rows {
+        let vin = (std::f64::consts::TAU * 60.0 * row[0]).cos();
+        assert!((row[1] - vin).abs() < 1e-12, "{row:?}");
+    }
+}
+
+#[test]
+fn transient_outputs_without_tran_are_command_errors() {
+    let input = Input::new(DIVIDER);
+    let csv = input.directory.join("out.csv");
+    let output = run(&[input.path.as_os_str(), OsStr::new("--csv"), csv.as_os_str()]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!csv.exists());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let words = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains(
+            "--csv writes transient waveforms, but the netlist requests no transient analysis"
+        ),
+        "{stderr}"
+    );
+    assert!(words.contains("add `.tran tstop tstep`"), "{stderr}");
+}
+
+#[test]
+fn unwritable_csv_paths_are_reported() {
+    let input = Input::new(RECTIFIER);
+    // a file where a directory is needed
+    let csv = input.path.join("hwr.csv");
+    let output = run(&[input.path.as_os_str(), OsStr::new("--csv"), csv.as_os_str()]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("could not write CSV"), "{stderr}");
+    assert!(stderr.contains("hwr.csv"), "{stderr}");
+}

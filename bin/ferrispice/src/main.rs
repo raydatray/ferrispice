@@ -1,4 +1,5 @@
 mod args;
+mod csv;
 mod diagnostics;
 mod logger;
 mod output;
@@ -42,6 +43,16 @@ fn run(args: args::Args) -> miette::Result<()> {
     let requests_dc = parsed.requests_dc();
     let transient = parsed.transient_request();
     let requests_analysis = requests_dc || transient.is_some();
+
+    let transient_outputs = args.transient_outputs();
+    if transient.is_none() && !transient_outputs.is_empty() {
+        return Err(miette::miette!(
+            help = "add `.tran tstop tstep` to the netlist to run a transient analysis",
+            "{input_name}: {} writes transient waveforms, but the netlist requests no \
+             transient analysis",
+            transient_outputs.join(" and "),
+        ));
+    }
 
     let system = if args.dump_mna || args.dump_lu {
         let system = match ferrispice_mna::assemble(&circuit) {
@@ -105,7 +116,15 @@ fn run(args: args::Args) -> miette::Result<()> {
             print_operating_point(&args, &circuit, system.as_ref(), solution.operating_point())?;
         }
 
-        output::print_transient(&circuit, &solution, stop, step)?;
+        let mut written = Vec::new();
+        if let Some(path) = &args.csv {
+            csv::write_csv(path, &solution)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("could not write CSV {:?}", path.display()))?;
+            written.push(path.as_path());
+        }
+
+        output::print_transient(&circuit, &solution, stop, step, &written)?;
     }
 
     Ok(())

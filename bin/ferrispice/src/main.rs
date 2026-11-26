@@ -3,9 +3,10 @@ mod csv;
 mod diagnostics;
 mod logger;
 mod output;
+mod plot;
 
 use clap::Parser;
-use ferrispice_circuit::Circuit;
+use ferrispice_circuit::{Circuit, Node};
 use ferrispice_mna::MnaSystem;
 use ferrispice_solver::{DcError, DcSolution, TransientError};
 use miette::{IntoDiagnostic, WrapErr};
@@ -53,6 +54,12 @@ fn run(args: args::Args) -> miette::Result<()> {
             transient_outputs.join(" and "),
         ));
     }
+
+    let plotted = if args.plot.is_some() {
+        plotted_nodes(&circuit, args.plot_nodes.as_deref(), &input_name)?
+    } else {
+        Vec::new()
+    };
 
     let system = if args.dump_mna || args.dump_lu {
         let system = match ferrispice_mna::assemble(&circuit) {
@@ -123,11 +130,56 @@ fn run(args: args::Args) -> miette::Result<()> {
                 .wrap_err_with(|| format!("could not write CSV {:?}", path.display()))?;
             written.push(path.as_path());
         }
+        if let Some(path) = &args.plot {
+            plot::write_svg(path, circuit.title(), &solution, &plotted)
+                .map_err(|error| miette::miette!("{error}"))
+                .wrap_err_with(|| format!("could not write plot {:?}", path.display()))?;
+            written.push(path.as_path());
+        }
 
         output::print_transient(&circuit, &solution, stop, step, &written)?;
     }
 
     Ok(())
+}
+
+/// the nodes named by `--plot-nodes`, or every non-ground node
+fn plotted_nodes<'a>(
+    circuit: &'a Circuit,
+    names: Option<&[String]>,
+    input_name: &str,
+) -> miette::Result<Vec<&'a Node>> {
+    let Some(names) = names else {
+        return Ok(circuit.non_ground_nodes().collect());
+    };
+
+    let unknown: Vec<_> = names
+        .iter()
+        .filter(|name| circuit.find_node(name).is_none())
+        .map(String::as_str)
+        .collect();
+    if !unknown.is_empty() {
+        let available: Vec<_> = circuit
+            .non_ground_nodes()
+            .map(|node| node.name.as_str())
+            .collect();
+        return Err(miette::miette!(
+            help = format!("the circuit's nodes are: {}", available.join(", ")),
+            "{input_name}: --plot-nodes names {} not in the circuit: {}",
+            if unknown.len() == 1 {
+                "a node"
+            } else {
+                "nodes"
+            },
+            unknown.join(", "),
+        ));
+    }
+
+    Ok(names
+        .iter()
+        .filter_map(|name| circuit.find_node(name))
+        .map(|id| circuit.node(id).expect("found nodes belong to the circuit"))
+        .collect())
 }
 
 /// the Newton trace, `f(x*)`, and the Jacobian's factors at an operating point

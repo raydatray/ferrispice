@@ -12,6 +12,9 @@ rust-version = "1.98.1"
 clap = { version = "4", features = ["derive"] }
 miette = { version = "7", features = ["fancy"] }
 nalgebra = "0.35"
+# SVG text is emitted as <text> elements, so no font files or system font
+# libraries are needed
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series"] }
 terminal_size = "0.4"
 thiserror = "2"
 tracing = "0.1"

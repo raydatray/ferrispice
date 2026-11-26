@@ -4,6 +4,9 @@ mod logger;
 mod output;
 
 use clap::Parser;
+use ferrispice_circuit::Circuit;
+use ferrispice_mna::MnaSystem;
+use ferrispice_solver::{DcError, DcSolution, TransientError};
 use miette::{IntoDiagnostic, WrapErr};
 
 fn main() {
@@ -37,6 +40,9 @@ fn run(args: args::Args) -> miette::Result<()> {
 
     // repeated `.dc` records request the same single analysis
     let requests_dc = parsed.requests_dc();
+    let transient = parsed.transient_request();
+    let requests_analysis = requests_dc || transient.is_some();
+
     let system = if args.dump_mna || args.dump_lu {
         let system = match ferrispice_mna::assemble(&circuit) {
             Ok(system) => system,
@@ -52,7 +58,7 @@ fn run(args: args::Args) -> miette::Result<()> {
         if args.dump_lu {
             if system.is_linear() {
                 output::print_lu(&circuit, &system)?;
-            } else if !requests_dc {
+            } else if !requests_analysis {
                 output::print_no_jacobian("no analysis was requested")?;
             }
         }
@@ -62,42 +68,86 @@ fn run(args: args::Args) -> miette::Result<()> {
         None
     };
 
-    if !requests_dc {
+    if !requests_analysis {
         // the summary needs only the unknown layout, not the stamped matrices
         output::print_validation(&circuit, &ferrispice_mna::UnknownLayout::new(&circuit));
         return Ok(());
     }
 
-    let solution = match ferrispice_solver::solve_dc(&circuit) {
-        Ok(solution) => solution,
-        Err(error) => {
-            // the iterations leading up to a failure stay inspectable
-            if let (true, ferrispice_solver::DcError::SourceStepping(failure)) =
-                (args.trace_newton, &error)
-            {
-                output::print_failed_trace(&circuit, failure)?;
+    if requests_dc {
+        let solution = match ferrispice_solver::solve_dc(&circuit) {
+            Ok(solution) => solution,
+            Err(error) => {
+                report_failed_operating_point(&args, &circuit, system.as_ref(), &error)?;
+                return Err(diagnostics::analysis(error, &circuit, input_name, text));
             }
-            if args.dump_lu && system.as_ref().is_some_and(|system| !system.is_linear()) {
-                output::print_no_jacobian("the nonlinear solve did not converge")?;
-            }
-            return Err(diagnostics::analysis(error, &circuit, input_name, text));
-        }
-    };
+        };
 
-    if args.trace_newton {
-        output::print_trace(&circuit, &solution)?;
+        print_operating_point(&args, &circuit, system.as_ref(), &solution)?;
+        output::print_solution(&circuit, &solution)?;
     }
 
-    if let Some(system) = &system {
+    if let Some((stop, step)) = transient {
+        let solution = match ferrispice_solver::solve_transient(&circuit, stop, step) {
+            Ok(solution) => solution,
+            Err(error) => {
+                // with `.dc` the operating point was already solved and reported
+                if let (false, TransientError::OperatingPoint(error)) = (requests_dc, &error) {
+                    report_failed_operating_point(&args, &circuit, system.as_ref(), error)?;
+                }
+                return Err(diagnostics::transient(error, &circuit, input_name, text));
+            }
+        };
+
+        // the operating-point flags describe the initial state when no `.dc`
+        // printed it already
+        if !requests_dc {
+            print_operating_point(&args, &circuit, system.as_ref(), solution.operating_point())?;
+        }
+
+        output::print_transient(&circuit, &solution, stop, step)?;
+    }
+
+    Ok(())
+}
+
+/// the Newton trace, `f(x*)`, and the Jacobian's factors at an operating point
+fn print_operating_point(
+    args: &args::Args,
+    circuit: &Circuit,
+    system: Option<&MnaSystem>,
+    solution: &DcSolution,
+) -> miette::Result<()> {
+    if args.trace_newton {
+        output::print_trace(circuit, solution)?;
+    }
+
+    if let Some(system) = system {
         if args.dump_mna {
-            output::print_f_at_solution(&circuit, system, &solution)?;
+            output::print_f_at_solution(circuit, system, solution)?;
         }
         if args.dump_lu && !system.is_linear() {
-            output::print_jacobian_lu(&circuit, system, &solution)?;
+            output::print_jacobian_lu(circuit, system, solution)?;
         }
     }
 
-    output::print_solution(&circuit, &solution)?;
+    Ok(())
+}
+
+/// what remains inspectable after the operating point could not be found
+fn report_failed_operating_point(
+    args: &args::Args,
+    circuit: &Circuit,
+    system: Option<&MnaSystem>,
+    error: &DcError,
+) -> miette::Result<()> {
+    // the iterations leading up to a failure stay inspectable
+    if let (true, DcError::SourceStepping(failure)) = (args.trace_newton, error) {
+        output::print_failed_trace(circuit, failure)?;
+    }
+    if args.dump_lu && system.is_some_and(|system| !system.is_linear()) {
+        output::print_no_jacobian("the nonlinear solve did not converge")?;
+    }
 
     Ok(())
 }

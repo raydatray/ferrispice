@@ -17,7 +17,7 @@ fn divider_produces_the_hand_calculated_operating_point() {
     assert_currents(&circuit, &solution, &[("Vin", -0.04)]);
 
     let system = assemble(&circuit).unwrap();
-    let residual = &system.g * solution.unknowns() - &system.b;
+    let residual = &system.g * solution.unknowns() - &system.b();
     assert!(residual.amax() < 1e-12);
     assert_eq!(solution.layout(), &system.layout);
 }
@@ -124,7 +124,7 @@ fn nonlinear_circuits_converge_through_newton_from_zero() {
     assert_eq!(solution.jacobian(), Some(&jacobian));
 
     let residual =
-        &system.g * solution.unknowns() + system.f(solution.unknowns()).unwrap() - &system.b;
+        &system.g * solution.unknowns() + system.f(solution.unknowns()).unwrap() - &system.b();
     assert!(residual.amax() < 1e-12, "{residual}");
 }
 

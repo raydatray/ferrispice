@@ -44,7 +44,7 @@ fn all_nine_elements_satisfy_the_full_dynamic_equation() {
     // d(va-vb)/dt=-3 and diL/dt=1 satisfy capacitor KCL and vL=L*diL/dt.
     let x = DVector::from_vec(vec![5.0, 4.0, 2.0, -2.0, 1.0, -1.0, 0.0, 0.0]);
     let derivative = DVector::from_vec(vec![0.0, 3.0, -6.0, -2.0, 1.0, -1.0, 0.0, 0.0]);
-    assert!((&system.g * x + &system.c * derivative - &system.b).norm() < 1e-12);
+    assert!((&system.g * x + &system.c * derivative - &system.b()).norm() < 1e-12);
 }
 
 #[test]

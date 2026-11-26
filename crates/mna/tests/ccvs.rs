@@ -76,5 +76,5 @@ fn nonzero_sensing_current_sets_the_loaded_output_voltage() {
         &[0.0, 3.0, 0.0, 0.0],
     );
     let x = DVector::from_vec(vec![-6.0, 0.0, 1.5, 3.0]);
-    assert!((&system.g * x - &system.b).norm() < 1e-12);
+    assert!((&system.g * x - &system.b()).norm() < 1e-12);
 }

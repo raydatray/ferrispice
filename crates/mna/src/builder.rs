@@ -1,7 +1,9 @@
-use ferrispice_circuit::{Element, ElementId, NodeId};
-use nalgebra::{DMatrix, DVector};
+use ferrispice_circuit::{Element, ElementId, NodeId, Waveform};
+use nalgebra::DMatrix;
 
-use crate::{AssemblyError, AssemblyErrorKind, MnaSystem, NonlinearDevice, UnknownLayout};
+use crate::{
+    AssemblyError, AssemblyErrorKind, MnaSystem, NonlinearDevice, SourceTerm, UnknownLayout,
+};
 
 /// accumulates element contributions into the MNA matrics
 /// `None` represents ground, whose matrix entries are skipped
@@ -18,7 +20,7 @@ impl MatrixBuilder {
             system: MnaSystem {
                 g: DMatrix::zeros(size, size),
                 c: DMatrix::zeros(size, size),
-                b: DVector::zeros(size),
+                sources: Vec::new(),
                 layout,
                 nonlinear: Vec::new(),
             },
@@ -53,9 +55,21 @@ impl MatrixBuilder {
         }
     }
 
-    pub fn add_b(&mut self, row: Option<usize>, value: f64) {
+    /// record `sign * waveform(t)` in `row` of `b(t)`
+    pub fn add_source(
+        &mut self,
+        row: Option<usize>,
+        sign: f64,
+        element: ElementId,
+        waveform: Waveform,
+    ) {
         if let Some(row) = row {
-            self.system.b[row] += value;
+            self.system.sources.push(SourceTerm {
+                element,
+                row,
+                sign,
+                waveform,
+            });
         }
     }
 

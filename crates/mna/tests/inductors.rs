@@ -54,5 +54,5 @@ fn storage_equation_matches_voltage_equals_l_times_current_derivative() {
     );
     let x = DVector::from_vec(vec![6.0, 1.0]);
     let derivative = DVector::from_vec(vec![0.0, 2.0]);
-    assert!((&system.g * x + &system.c * derivative - &system.b).norm() < 1e-12);
+    assert!((&system.g * x + &system.c * derivative - &system.b()).norm() < 1e-12);
 }

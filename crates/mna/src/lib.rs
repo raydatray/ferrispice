@@ -3,7 +3,7 @@ mod error;
 mod layout;
 mod stamps;
 
-use ferrispice_circuit::{Circuit, ElementId, ElementKind};
+use ferrispice_circuit::{Circuit, ElementId, ElementKind, Waveform};
 use nalgebra::{DMatrix, DVector};
 
 pub use builder::MatrixBuilder;
@@ -13,16 +13,19 @@ pub use stamps::diode::{
     DiodeCurrentAndDerivative, DiodeStamp, NonFiniteDiode, diode_current_and_derivative,
 };
 
-/// the circuit equation `G x + C dx/dt + f(x) = b`
+/// the circuit equation `G x + C dx/dt + f(x) = b(t)`
 ///
-/// `G`, `C`, and `b` are constant. `f(x)` holds the currents of nonlinear
-/// devices leaving each node; it depends on `x`, so it is represented by the
-/// devices that produce it
+/// `G` and `C` are constant. `f(x)` holds the currents of nonlinear devices
+/// leaving each node, and `b(t)` the independent sources; each depends on
+/// something that changes, so each is represented by what produces it: `f`
+/// by its devices and `b` by its source terms
 #[derive(Clone, Debug, PartialEq)]
 pub struct MnaSystem {
     pub g: DMatrix<f64>,
     pub c: DMatrix<f64>,
-    pub b: DVector<f64>,
+    /// every independent source's contributions to `b(t)`, in circuit element
+    /// order; the only record of `b`
+    pub sources: Vec<SourceTerm>,
     pub layout: UnknownLayout,
     /// devices contributing to `f(x)`, in circuit element order
     pub nonlinear: Vec<NonlinearDevice>,
@@ -32,6 +35,17 @@ pub struct MnaSystem {
 #[derive(Clone, Debug, PartialEq)]
 pub enum NonlinearDevice {
     Diode(DiodeStamp),
+}
+
+/// one signed contribution of an independent source to a row of `b(t)`
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceTerm {
+    pub element: ElementId,
+    /// matrix index; ground rows are never recorded
+    pub row: usize,
+    /// `+1` or `-1`
+    pub sign: f64,
+    pub waveform: Waveform,
 }
 
 /// one signed device current in a row of `f(x)`
@@ -50,6 +64,27 @@ pub enum TermSign {
 }
 
 impl MnaSystem {
+    /// `b(t)`: the right-hand side with every source evaluated at `t`
+    pub fn b_at(&self, t: f64) -> DVector<f64> {
+        let mut b = DVector::zeros(self.layout.len());
+
+        for term in &self.sources {
+            b[term.row] += term.sign * term.waveform.value_at(t);
+        }
+
+        b
+    }
+
+    /// `b(0)`, the right-hand side DC analysis uses
+    pub fn b(&self) -> DVector<f64> {
+        self.b_at(0.0)
+    }
+
+    /// whether `b(t)` is the same at every time
+    pub fn is_time_invariant(&self) -> bool {
+        self.sources.iter().all(|term| term.waveform.is_constant())
+    }
+
     /// whether `f(x)` is identically zero, so `G x = b` describes DC exactly
     pub fn is_linear(&self) -> bool {
         self.nonlinear.is_empty()
@@ -167,10 +202,10 @@ pub fn assemble(circuit: &Circuit) -> Result<MnaSystem, AssemblyError> {
                 stamps::passive::inductor(&mut builder, element, inductance)?
             }
             ElementKind::CurrentSource { waveform } => {
-                stamps::independent::current_source(&mut builder, element, waveform.dc_value())
+                stamps::independent::current_source(&mut builder, element, waveform)
             }
             ElementKind::VoltageSource { waveform } => {
-                stamps::independent::voltage_source(&mut builder, element, waveform.dc_value())?
+                stamps::independent::voltage_source(&mut builder, element, waveform)?
             }
             ElementKind::Vcvs {
                 control_positive,

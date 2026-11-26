@@ -167,7 +167,8 @@ pub fn solve_dc(circuit: &Circuit) -> Result<DcSolution, DcError> {
     let _span = tracing::debug_span!("solve_dc", unknowns = system.layout.len()).entered();
 
     if system.is_linear() {
-        let x = solve_linear(&system.g, &system.b)?;
+        let b = system.b();
+        let x = solve_linear(&system.g, &b)?;
         return Ok(interpret(circuit, &system, x, DcMethod::Linear));
     }
 
@@ -185,10 +186,11 @@ pub fn solve_dc(circuit: &Circuit) -> Result<DcSolution, DcError> {
 fn solve_nonlinear(system: &MnaSystem) -> Result<DcMethod, DcError> {
     let options = NewtonOptions::default();
     let zero = DVector::zeros(system.layout.len());
+    let b = system.b();
 
     // sources scaled by λ appear only in `b`, so the right-hand side is `λ b`
     let solve_at = |scale: f64, initial: &DVector<f64>| {
-        let r = &system.b * scale;
+        let r = &b * scale;
         let problem = NewtonProblem {
             system,
             a: &system.g,

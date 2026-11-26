@@ -454,6 +454,99 @@ fn linear_circuits_dump_a_zero_f() {
     assert!(!stdout.contains("f(x*)"), "{stdout}");
 }
 
+/// rows of the symbolic `b(t)` section as `(row label, expression)`
+fn b_rows(stdout: &str) -> Vec<(String, String)> {
+    stdout
+        .lines()
+        .skip_while(|line| *line != "b(t):")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .map(|line| {
+            let (label, terms) = line.split_once("  ").unwrap();
+            (label.trim().to_owned(), terms.trim().to_owned())
+        })
+        .collect()
+}
+
+const RECTIFIER: &str = "* a half-wave recitifier circuit
+Vin n1 0 COS 1 60
+* Vin is a cosine with a 1V amplitude and 60Hz frequency
+D1 n1 n2
+R1 n2 0 50
+C1 n2 0 100e-6
+.tran 0.05s  0.1ms
+* run transient simulation for 0.05s with step size of 0.1ms
+.end
+";
+
+#[test]
+fn dumped_mna_shows_b_of_t_for_time_varying_sources() {
+    let output = dump_mna(RECTIFIER);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+
+    assert!(stdout.contains("G x + C dx/dt + f(x) = b(t)"), "{stdout}");
+    assert_eq!(
+        matrix(&stdout, "C", 3)[1],
+        ("KCL n2".to_owned(), vec![0.0, 1e-4, 0.0])
+    );
+    // the numeric vector is the sources at t = 0, where COS 1 60 is 1 V
+    let b: Vec<_> = matrix(&stdout, "b(0)", 1)
+        .into_iter()
+        .map(|(_, row)| row[0])
+        .collect();
+    assert_eq!(b, [0.0, 0.0, 1.0]);
+    assert_eq!(
+        b_rows(&stdout),
+        [
+            ("KCL n1".to_owned(), "0".to_owned()),
+            ("KCL n2".to_owned(), "0".to_owned()),
+            ("branch Vin".to_owned(), "cos(2π·60·t)".to_owned()),
+        ]
+    );
+    let position = |text: &str| stdout.find(text).unwrap();
+    assert!(position("b(0):") < position("b(t):"));
+}
+
+#[test]
+fn b_of_t_combines_every_source_in_a_row() {
+    let output = dump_mna(
+        "Mixed\nVin a 0 COS 2 60\nI1 a b DC 1m\nI2 b 0 COS -1m 1k\nI3 b 0 SIN 2m 2k\nV2 c 0 SIN 1 50\nR1 a b 1k\nR2 b c 1k\nR3 c 0 1k\n.end\n",
+    );
+    assert!(output.status.success(), "{output:?}");
+    let stdout = output_text(output.stdout);
+
+    assert_eq!(
+        b_rows(&stdout),
+        [
+            ("KCL a".to_owned(), "-0.001".to_owned()),
+            (
+                "KCL b".to_owned(),
+                "0.001 + 0.001·cos(2π·1000·t) - 0.002·sin(2π·2000·t)".to_owned()
+            ),
+            ("KCL c".to_owned(), "0".to_owned()),
+            ("branch Vin".to_owned(), "2·cos(2π·60·t)".to_owned()),
+            ("branch V2".to_owned(), "sin(2π·50·t)".to_owned()),
+        ]
+    );
+    // at t = 0, SIN sources contribute 0 while COS contributes its amplitude
+    let b: Vec<_> = matrix(&stdout, "b(0)", 1)
+        .into_iter()
+        .map(|(_, row)| row[0])
+        .collect();
+    assert_eq!(b, [-0.001, 0.002, 0.0, 2.0, 0.0]);
+}
+
+#[test]
+fn constant_sources_keep_a_single_numeric_b() {
+    let output = dump_mna(DIVIDER);
+    let stdout = output_text(output.stdout);
+
+    assert!(stdout.lines().any(|line| line == "b:"), "{stdout}");
+    assert!(!stdout.contains("b(t)"), "{stdout}");
+    assert!(!stdout.contains("b(0)"), "{stdout}");
+}
+
 #[test]
 fn symbolic_f_remains_visible_when_the_solve_fails() {
     let output = dump_mna("Reverse\nI1 a 0 DC 1e-3\nD1 a 0\n.dc\n.end\n");

@@ -1,4 +1,4 @@
-use ferrispice_circuit::{Circuit, ElementKind};
+use ferrispice_circuit::{Circuit, ElementKind, Waveform};
 use ferrispice_mna::{MnaSystem, NonlinearDevice, TermSign, UnknownKind, UnknownLayout};
 use ferrispice_solver::{
     DcMethod, DcSolution, NewtonError, NewtonIteration, NewtonSolution, SourceSteppingFailure,
@@ -339,15 +339,24 @@ pub(crate) fn print_mna(circuit: &Circuit, system: &MnaSystem) -> miette::Result
 
     let b = system.b();
     let b = DMatrix::from_column_slice(b.len(), 1, b.as_slice());
-    let body = [
-        "G x + C dx/dt + f(x) = b".to_owned(),
+    // with time-varying sources the numeric `b` is only its value at t = 0
+    let (equation, b_name) = if system.is_time_invariant() {
+        ("G x + C dx/dt + f(x) = b", "b")
+    } else {
+        ("G x + C dx/dt + f(x) = b(t)", "b(0)")
+    };
+    let mut sections = vec![
+        equation.to_owned(),
         unknowns.join("\n"),
         format_matrix("G", &system.g, &rows, &columns),
         format_matrix("C", &system.c, &rows, &columns),
         format_f(system, &rows),
-        format_matrix("b", &b, &rows, &["b".to_owned()]),
-    ]
-    .join("\n\n");
+        format_matrix(b_name, &b, &rows, &[b_name.to_owned()]),
+    ];
+    if !system.is_time_invariant() {
+        sections.push(format_b(system, &rows));
+    }
+    let body = sections.join("\n\n");
 
     print_panel("MNA system", &body)
 }
@@ -433,6 +442,54 @@ fn format_f(system: &MnaSystem, rows: &[String]) -> String {
     }
 
     output
+}
+
+/// `b(t)` symbolically: each row's source terms as functions of time
+fn format_b(system: &MnaSystem, rows: &[String]) -> String {
+    let mut terms = vec![Vec::new(); rows.len()];
+    for term in &system.sources {
+        terms[term.row].push(source_term(term.sign, &term.waveform));
+    }
+
+    let row_width = width(rows);
+    let mut output = "b(t):".to_owned();
+    for (label, row) in rows.iter().zip(&terms) {
+        let mut expression = String::new();
+        for (index, term) in row.iter().enumerate() {
+            match (index, term.strip_prefix('-')) {
+                (0, _) => expression.push_str(term),
+                (_, Some(negated)) => expression.push_str(&format!(" - {negated}")),
+                (_, None) => expression.push_str(&format!(" + {term}")),
+            }
+        }
+        if expression.is_empty() {
+            expression.push('0');
+        }
+        output.push_str(&format!("\n  {label:<row_width$}  {expression}"));
+    }
+
+    output
+}
+
+/// `sign * waveform(t)` as an expression in `t`, with a leading `-` when negative
+fn source_term(sign: f64, waveform: &Waveform) -> String {
+    let (function, amplitude, frequency) = match *waveform {
+        Waveform::Dc(value) => return number(sign * value),
+        Waveform::Cos {
+            amplitude,
+            frequency,
+        } => ("cos", amplitude, frequency),
+        Waveform::Sin {
+            amplitude,
+            frequency,
+        } => ("sin", amplitude, frequency),
+    };
+    let wave = format!("{function}(2π·{}·t)", number(frequency));
+    match sign * amplitude {
+        1.0 => wave,
+        -1.0 => format!("-{wave}"),
+        amplitude => format!("{}·{wave}", number(amplitude)),
+    }
 }
 
 /// print a diagnostic factorization of G, with `P * G = L * U`

@@ -5,7 +5,10 @@ use thiserror::Error;
 
 use crate::dc::{element_current as dc_element_current, node_voltage};
 use crate::linear::LuFactors;
-use crate::{DcError, DcSolution, SolveError, solve_dc};
+use crate::{
+    DcError, DcSolution, NewtonError, NewtonOptions, NewtonProblem, SolveError, solve_dc,
+    solve_newton,
+};
 
 /// a step count within this relative distance of an integer is that integer,
 /// so `0.05 / 1e-4` is 500 steps even if the division rounds up slightly
@@ -26,8 +29,13 @@ pub enum TransientError {
         source: SolveError,
     },
 
-    #[error("backward Euler for circuits with nonlinear devices is not available yet")]
-    Nonlinear,
+    /// Newton-Raphson did not converge for a step of a nonlinear circuit
+    #[error("Newton-Raphson did not converge for the backward-Euler step to t = {time} s")]
+    Newton {
+        time: f64,
+        #[source]
+        source: NewtonError,
+    },
 }
 
 /// what a transient analysis did
@@ -36,8 +44,20 @@ pub struct TransientStats {
     /// time steps from `t = 0` to the stop time
     pub steps: usize,
     /// LU factorizations of `G + C/h`; one per distinct step size for a
-    /// linear circuit
+    /// linear circuit, zero for a nonlinear one, which factors its Jacobian
+    /// at every Newton iteration
     pub factorizations: usize,
+    /// Newton iterations across every step; zero for a linear circuit
+    pub newton_iterations: usize,
+    /// the most Newton iterations any one step took
+    pub max_step_iterations: usize,
+}
+
+impl TransientStats {
+    fn record_step(&mut self, iterations: usize) {
+        self.newton_iterations += iterations;
+        self.max_step_iterations = self.max_step_iterations.max(iterations);
+    }
 }
 
 /// node voltages and currents at every time point, queried by circuit IDs
@@ -143,16 +163,12 @@ pub fn solve_transient(
         ..TransientStats::default()
     };
 
-    if !system.is_linear() {
-        return Err(TransientError::Nonlinear);
-    }
-
-    let states = integrate_linear(
-        &system,
-        &grid,
-        operating_point.unknowns().clone(),
-        &mut stats,
-    )?;
+    let initial = operating_point.unknowns().clone();
+    let states = if system.is_linear() {
+        integrate_linear(&system, &grid, initial, &mut stats)?
+    } else {
+        integrate_nonlinear(&system, &grid, initial, &mut stats)?
+    };
 
     tracing::debug!(points = grid.times.len(), "integrated transient");
 
@@ -264,6 +280,47 @@ fn integrate_linear(
         let r = companion.rhs(system, time, &states[n]);
         let x = factors.solve(&r).map_err(singular)?;
         states.push(x);
+    }
+
+    Ok(states)
+}
+
+/// a nonlinear circuit solves each step with Newton-Raphson, starting from the
+/// previous point, which is close: a 0.1 ms step moves a 60 Hz, 1 V cosine by
+/// at most 0.038 V
+fn integrate_nonlinear(
+    system: &MnaSystem,
+    grid: &TimeGrid,
+    initial: DVector<f64>,
+    stats: &mut TransientStats,
+) -> Result<Vec<DVector<f64>>, TransientError> {
+    let options = NewtonOptions::default();
+    let mut states = Vec::with_capacity(grid.times.len());
+    states.push(initial);
+    let mut companion: Option<Companion> = None;
+
+    for (n, &step) in grid.steps.iter().enumerate() {
+        let time = grid.times[n + 1];
+
+        if companion
+            .as_ref()
+            .is_none_or(|companion| companion.step != step)
+        {
+            companion = Some(Companion::new(system, step));
+        }
+        let companion = companion.as_ref().expect("formed above");
+
+        let r = companion.rhs(system, time, &states[n]);
+        let problem = NewtonProblem {
+            system,
+            a: &companion.a,
+            r: &r,
+        };
+        let solution = solve_newton(&problem, &states[n], &options)
+            .map_err(|source| TransientError::Newton { time, source })?;
+
+        stats.record_step(solution.iterations.len());
+        states.push(solution.x);
     }
 
     Ok(states)

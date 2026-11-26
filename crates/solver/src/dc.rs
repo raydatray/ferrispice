@@ -272,7 +272,13 @@ fn interpret(
     }
 }
 
-fn element_current(element: &Element, layout: &UnknownLayout, unknowns: &DVector<f64>) -> f64 {
+/// the current through `element` at `unknowns`, at DC: capacitors carry none
+/// and independent sources have their `t = 0` values
+pub(crate) fn element_current(
+    element: &Element,
+    layout: &UnknownLayout,
+    unknowns: &DVector<f64>,
+) -> f64 {
     match element.kind {
         ElementKind::Resistor { resistance } => {
             (node_voltage(element.positive, layout, unknowns)
@@ -309,7 +315,7 @@ fn element_current(element: &Element, layout: &UnknownLayout, unknowns: &DVector
     }
 }
 
-fn node_voltage(node: NodeId, layout: &UnknownLayout, unknowns: &DVector<f64>) -> f64 {
+pub(crate) fn node_voltage(node: NodeId, layout: &UnknownLayout, unknowns: &DVector<f64>) -> f64 {
     if node.is_ground() {
         return 0.0;
     }

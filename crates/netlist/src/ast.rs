@@ -13,14 +13,27 @@ impl ParsedNetlist {
             .iter()
             .any(|request| request.kind == Analysis::Dc)
     }
+
+    /// `(stop, step)` of the `.tran` record, if there is one
+    pub fn transient_request(&self) -> Option<(f64, f64)> {
+        self.analyses.iter().find_map(|request| match request.kind {
+            Analysis::Tran { stop, step } => Some((stop, step)),
+            Analysis::Dc => None,
+        })
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Analysis {
     Dc,
+    /// `.tran tstop tstep`: stop time first, the reverse of standard SPICE
+    Tran {
+        stop: f64,
+        step: f64,
+    },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AnalysisRequest {
     pub kind: Analysis,
     pub location: NetlistPosition,

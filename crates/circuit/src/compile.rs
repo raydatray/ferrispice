@@ -1,20 +1,26 @@
 use std::collections::HashMap;
 
-use ferrispice_netlist::{ParsedElement, ParsedKind, ParsedNetlist, ParsedWaveform};
+use ferrispice_netlist::{Analysis, ParsedElement, ParsedKind, ParsedNetlist, ParsedWaveform};
 
 use crate::model::name_key;
 use crate::{
     Circuit, CircuitError, DEFAULT_SATURATION_CURRENT, DEFAULT_THERMAL_VOLTAGE, Element,
     ElementError, ElementErrorKind, ElementId, ElementKind, GROUND, Node, NodeId,
+    TransientRequestError, TransientRequestErrorKind, Waveform,
 };
 
 /// resolve names and validate parameters without allocating any matrix indices
+///
+/// a `.tran` request is validated here too, so its times are usable by any
+/// later analysis: both positive, and the step no longer than the stop time
 ///
 /// A nonempty circuit must connect some element terminal to ground. Without one,
 /// every node voltage lacks a reference and no analysis can succeed. Floating
 /// subcircuits beside a grounded one are left to the solver.
 pub fn compile(parsed: &ParsedNetlist) -> Result<Circuit, CircuitError> {
     let _span = tracing::debug_span!("compile_circuit", elements = parsed.elements.len()).entered();
+
+    validate_transient(parsed)?;
 
     let registry = Registry::build(parsed)?;
     let elements = parsed
@@ -196,10 +202,10 @@ fn resolve_kind(element: &ParsedElement, registry: &Registry) -> Result<ElementK
             inductance: *inductance,
         },
         ParsedKind::VoltageSource { waveform } => ElementKind::VoltageSource {
-            dc: value_at_zero(waveform),
+            waveform: resolve_waveform(*waveform),
         },
         ParsedKind::CurrentSource { waveform } => ElementKind::CurrentSource {
-            dc: value_at_zero(waveform),
+            waveform: resolve_waveform(*waveform),
         },
         ParsedKind::Vcvs {
             control_positive,
@@ -238,13 +244,50 @@ fn resolve_kind(element: &ParsedElement, registry: &Registry) -> Result<ElementK
     })
 }
 
-/// the source value at `t = 0`; `COS` is at its amplitude and `SIN` is zero
-fn value_at_zero(waveform: &ParsedWaveform) -> f64 {
-    match *waveform {
-        ParsedWaveform::Dc(value) => value,
-        ParsedWaveform::Cos { amplitude, .. } => amplitude,
-        ParsedWaveform::Sin { .. } => 0.0,
+fn resolve_waveform(waveform: ParsedWaveform) -> Waveform {
+    match waveform {
+        ParsedWaveform::Dc(value) => Waveform::Dc(value),
+        ParsedWaveform::Cos {
+            amplitude,
+            frequency,
+        } => Waveform::Cos {
+            amplitude,
+            frequency,
+        },
+        ParsedWaveform::Sin {
+            amplitude,
+            frequency,
+        } => Waveform::Sin {
+            amplitude,
+            frequency,
+        },
     }
+}
+
+fn validate_transient(parsed: &ParsedNetlist) -> Result<(), TransientRequestError> {
+    for request in &parsed.analyses {
+        let Analysis::Tran { stop, step } = request.kind else {
+            continue;
+        };
+
+        let kind = if stop.is_nan() || stop <= 0.0 {
+            TransientRequestErrorKind::NonPositiveStop { stop }
+        } else if step.is_nan() || step <= 0.0 {
+            TransientRequestErrorKind::NonPositiveStep { step }
+        } else if step > stop {
+            TransientRequestErrorKind::StepExceedsStop { stop, step }
+        } else {
+            continue;
+        };
+
+        return Err(TransientRequestError {
+            location: request.location,
+            span: request.span,
+            kind,
+        });
+    }
+
+    Ok(())
 }
 
 fn validate_parameters(element: &ParsedElement, kind: &ElementKind) -> Result<(), ElementError> {
@@ -257,8 +300,30 @@ fn validate_parameters(element: &ParsedElement, kind: &ElementKind) -> Result<()
         }
         ElementKind::Capacitor { capacitance } => nonnegative(element, "capacitance", capacitance)?,
         ElementKind::Inductor { inductance } => nonnegative(element, "inductance", inductance)?,
-        ElementKind::VoltageSource { dc } | ElementKind::CurrentSource { dc } => {
-            finite(element, "DC value", dc)?
+        ElementKind::VoltageSource { waveform } | ElementKind::CurrentSource { waveform } => {
+            match waveform {
+                Waveform::Dc(value) => finite(element, "DC value", value)?,
+                Waveform::Cos {
+                    amplitude,
+                    frequency,
+                } => validate_periodic(
+                    element,
+                    "COS amplitude",
+                    "COS frequency",
+                    amplitude,
+                    frequency,
+                )?,
+                Waveform::Sin {
+                    amplitude,
+                    frequency,
+                } => validate_periodic(
+                    element,
+                    "SIN amplitude",
+                    "SIN frequency",
+                    amplitude,
+                    frequency,
+                )?,
+            }
         }
         ElementKind::Vcvs { gain, .. } | ElementKind::Cccs { gain, .. } => {
             finite(element, "gain", gain)?
@@ -271,6 +336,27 @@ fn validate_parameters(element: &ParsedElement, kind: &ElementKind) -> Result<()
         } => finite(element, "transresistance", transresistance)?,
         // diode parameters are fixed positive constants, not netlist values
         ElementKind::Diode { .. } => {}
+    }
+    Ok(())
+}
+
+fn validate_periodic(
+    element: &ParsedElement,
+    amplitude_label: &'static str,
+    frequency_label: &'static str,
+    amplitude: f64,
+    frequency: f64,
+) -> Result<(), ElementError> {
+    finite(element, amplitude_label, amplitude)?;
+    finite(element, frequency_label, frequency)?;
+    if frequency <= 0.0 {
+        return Err(error(
+            element,
+            ElementErrorKind::NonPositiveParameter {
+                parameter: frequency_label,
+                value: frequency,
+            },
+        ));
     }
     Ok(())
 }

@@ -278,7 +278,7 @@ fn element_current(element: &Element, layout: &UnknownLayout, unknowns: &DVector
                 / resistance
         }
         ElementKind::Capacitor { .. } => 0.0,
-        ElementKind::CurrentSource { dc } => dc,
+        ElementKind::CurrentSource { waveform } => waveform.dc_value(),
         ElementKind::Vccs {
             control_positive,
             control_negative,

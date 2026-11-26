@@ -1,5 +1,5 @@
 use ferrispice_circuit::{
-    CircuitError, ElementError, ElementErrorKind, ElementKind, GROUND, compile,
+    CircuitError, ElementError, ElementErrorKind, ElementKind, GROUND, Waveform, compile,
 };
 use ferrispice_netlist::{NetlistPosition, ParsedKind, ParsedNetlist, ParsedWaveform, parse};
 
@@ -45,7 +45,12 @@ fn divider_runs_from_netlist_to_validated_circuit() {
         .unwrap();
     assert_eq!(voltage.positive, n1);
     assert_eq!(voltage.negative, GROUND);
-    assert_eq!(voltage.kind, ElementKind::VoltageSource { dc: 6.0 });
+    assert_eq!(
+        voltage.kind,
+        ElementKind::VoltageSource {
+            waveform: Waveform::Dc(6.0)
+        }
+    );
     assert!(voltage.kind.has_branch_current());
 
     let resistor = &circuit.elements()[1];
@@ -97,7 +102,9 @@ fn compiles_all_nine_kinds_and_control_only_nodes() {
     );
     assert_eq!(
         circuit.elements()[4].kind,
-        ElementKind::VoltageSource { dc: 0.0 }
+        ElementKind::VoltageSource {
+            waveform: Waveform::Dc(0.0)
+        }
     );
     assert_eq!(
         circuit.elements()[5].kind,
@@ -113,7 +120,9 @@ fn compiles_all_nine_kinds_and_control_only_nodes() {
     );
     assert_eq!(
         circuit.elements()[8].kind,
-        ElementKind::CurrentSource { dc: -1.0 }
+        ElementKind::CurrentSource {
+            waveform: Waveform::Dc(-1.0)
+        }
     );
 }
 

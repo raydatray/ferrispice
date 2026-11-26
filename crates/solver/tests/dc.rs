@@ -213,3 +213,22 @@ fn unsolvable_circuits_report_where_source_stepping_stopped() {
         "{error}"
     );
 }
+
+#[test]
+fn time_varying_sources_contribute_their_value_at_time_zero() {
+    let (circuit, solution) =
+        solve("Vin n1 0 COS 2 60\nR1 n1 n2 1k\nR2 n2 0 1k\nI1 0 n2 COS 1m 1k");
+    assert_voltages(&circuit, &solution, &[("n1", 2.0), ("n2", 1.5)]);
+    assert_currents(&circuit, &solution, &[("I1", 1e-3), ("Vin", -0.5e-3)]);
+    assert_kcl(&circuit, &solution);
+
+    let (circuit, solution) = solve("Vin n1 0 COS 1 60\nD1 n1 n2\nR1 n2 0 50");
+    assert_close(voltage(&circuit, &solution, "n1"), 1.0);
+    assert!((voltage(&circuit, &solution, "n2") - 0.267314).abs() < 1e-6);
+
+    let (circuit, solution) =
+        solve("Vin n1 0 SIN 2 60\nR1 n1 n2 1k\nR2 n2 0 1k\nI1 0 n2 SIN 1m 1k");
+    assert_voltages(&circuit, &solution, &[("n1", 0.0), ("n2", 0.0)]);
+    assert_currents(&circuit, &solution, &[("I1", 0.0), ("Vin", 0.0)]);
+    assert_kcl(&circuit, &solution);
+}

@@ -1,4 +1,4 @@
-use nalgebra::{DMatrix, DVector};
+use nalgebra::{DMatrix, DVector, Dyn, LU};
 use thiserror::Error;
 
 /// absolute residual allowance per equation, for rows whose terms are all near zero
@@ -56,6 +56,77 @@ pub fn solve_linear(a: &DMatrix<f64>, b: &DVector<f64>) -> Result<DVector<f64>, 
         return Err(SolveError::DimensionMismatch { rows, rhs: b.len() });
     }
 
+    check_matrix(a)?;
+    check_rhs(b)?;
+
+    let x = LuFactors::new(a)?.solve(b)?;
+
+    tracing::debug!(unknowns = rows, "solved linear system");
+
+    Ok(x)
+}
+
+/// an LU factorization of `a`, checked once and reused for many right-hand
+/// sides; backward Euler solves with the same `G + C/h` at every time step
+#[derive(Clone, Debug)]
+pub(crate) struct LuFactors {
+    a: DMatrix<f64>,
+    /// `None` for an empty matrix
+    lu: Option<LU<f64, Dyn, Dyn>>,
+}
+
+impl LuFactors {
+    /// factor a square, finite matrix, applying `solve_linear`'s singularity
+    /// check
+    pub(crate) fn new(a: &DMatrix<f64>) -> Result<Self, SolveError> {
+        let (rows, columns) = a.shape();
+        if rows != columns {
+            return Err(SolveError::NotSquare { rows, columns });
+        }
+        check_matrix(a)?;
+
+        if rows == 0 {
+            return Ok(Self {
+                a: a.clone(),
+                lu: None,
+            });
+        }
+
+        let threshold = rows as f64 * f64::EPSILON * a.amax();
+
+        let lu = a.clone().lu(); // do elimination and row swaps (pivots are ready)
+        let u = lu.u(); // extract resulting upper-trianglar matrix
+        if let Some(pivot) = (0..rows).find(|&i| u[(i, i)].abs() <= threshold) {
+            return Err(SolveError::Singular { pivot });
+        }
+
+        Ok(Self {
+            a: a.clone(),
+            lu: Some(lu),
+        })
+    }
+
+    /// back-substitute for `b`, then check the solution against `a`
+    pub(crate) fn solve(&self, b: &DVector<f64>) -> Result<DVector<f64>, SolveError> {
+        let rows = self.a.nrows();
+        if b.len() != rows {
+            return Err(SolveError::DimensionMismatch { rows, rhs: b.len() });
+        }
+        check_rhs(b)?;
+
+        let Some(lu) = &self.lu else {
+            return Ok(DVector::zeros(0));
+        };
+
+        let x = lu.solve(b).ok_or(SolveError::Singular { pivot: 0 })?;
+
+        check_solution(&self.a, b, &x)?;
+
+        Ok(x)
+    }
+}
+
+fn check_matrix(a: &DMatrix<f64>) -> Result<(), SolveError> {
     if let Some((row, column)) = a.row_iter().enumerate().find_map(|(row, values)| {
         values
             .iter()
@@ -69,29 +140,15 @@ pub fn solve_linear(a: &DMatrix<f64>, b: &DVector<f64>) -> Result<DVector<f64>, 
         });
     }
 
+    Ok(())
+}
+
+fn check_rhs(b: &DVector<f64>) -> Result<(), SolveError> {
     if let Some((row, &value)) = b.iter().enumerate().find(|(_, value)| !value.is_finite()) {
         return Err(SolveError::NonFiniteRhs { row, value });
     }
 
-    if rows == 0 {
-        return Ok(DVector::zeros(0));
-    }
-
-    let threshold = rows as f64 * f64::EPSILON * a.amax();
-
-    let lu = a.clone().lu(); // do elimination and row swaps (pivots are ready)
-    let u = lu.u(); // extract resulting upper-trianglar matrix
-    if let Some(pivot) = (0..rows).find(|&i| u[(i, i)].abs() <= threshold) {
-        return Err(SolveError::Singular { pivot });
-    }
-
-    let x = lu.solve(b).ok_or(SolveError::Singular { pivot: 0 })?;
-
-    check_solution(a, b, &x)?;
-
-    tracing::debug!(unknowns = rows, "solved linear system");
-
-    Ok(x)
+    Ok(())
 }
 
 fn check_solution(a: &DMatrix<f64>, b: &DVector<f64>, x: &DVector<f64>) -> Result<(), SolveError> {

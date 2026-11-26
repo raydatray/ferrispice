@@ -17,7 +17,8 @@ pub(crate) struct Args {
     #[arg(value_name = "netlist")]
     pub path: PathBuf,
 
-    /// print the MNA matrices G, C, b, the nonlinear vector f(x), and unknown ordering
+    /// print the MNA matrices G, C, b, the nonlinear vector f(x), and unknown
+    /// ordering; time-varying sources also print b(t)
     #[arg(long)]
     pub dump_mna: bool,
 

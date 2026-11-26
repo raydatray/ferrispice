@@ -164,6 +164,6 @@ fn mixed_circuit_with_all_nine_elements_is_consistent() {
     assert_kcl(&circuit, &solution);
 
     let system = assemble(&circuit).unwrap();
-    assert!((&system.g * solution.unknowns() - &system.b).amax() < 1e-12);
+    assert!((&system.g * solution.unknowns() - &system.b()).amax() < 1e-12);
     assert_eq!(voltage(&circuit, &solution, "0"), 0.0);
 }

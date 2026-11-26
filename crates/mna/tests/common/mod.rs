@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use ferrispice_circuit::{Circuit, compile};
 use ferrispice_mna::{MnaSystem, assemble};
 use ferrispice_netlist::parse;
@@ -19,8 +21,9 @@ pub fn system(records: &str) -> MnaSystem {
 pub fn assert_system(system: &MnaSystem, g: &[&[f64]], c: &[&[f64]], b: &[f64]) {
     assert_matrix(&system.g, g);
     assert_matrix(&system.c, c);
-    assert_eq!(system.b.len(), b.len());
-    for (&actual, &expected) in system.b.iter().zip(b) {
+    let actual_b = system.b();
+    assert_eq!(actual_b.len(), b.len());
+    for (&actual, &expected) in actual_b.iter().zip(b) {
         assert_close(actual, expected);
     }
 }

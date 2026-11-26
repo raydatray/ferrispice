@@ -70,5 +70,5 @@ fn loaded_output_satisfies_kcl_for_nonzero_control_voltage() {
         &[0.0, 0.0, 3.0],
     );
     let x = DVector::from_vec(vec![-24.0, 3.0, 0.0]);
-    assert!((&system.g * x - &system.b).norm() < 1e-12);
+    assert!((&system.g * x - &system.b()).norm() < 1e-12);
 }

@@ -1,4 +1,4 @@
-use ferrispice_circuit::{GROUND, compile};
+use ferrispice_circuit::{GROUND, Waveform, compile};
 use ferrispice_mna::{AssemblyErrorKind, MatrixBuilder, UnknownKind, UnknownLayout, assemble};
 use ferrispice_netlist::parse;
 use nalgebra::{DMatrix, DVector};
@@ -54,7 +54,8 @@ fn empty_circuit_has_no_unknowns_or_ground_equation() {
     assert!(system.layout.is_empty());
     assert_eq!(system.g.shape(), (0, 0));
     assert_eq!(system.c.shape(), (0, 0));
-    assert_eq!(system.b.len(), 0);
+    assert_eq!(system.b().len(), 0);
+    assert!(system.sources.is_empty());
 }
 
 #[test]
@@ -74,10 +75,11 @@ fn builder_accumulates_incidence_storage_and_rhs_without_ground_entries() {
     builder.add_c_two_terminal(p, p, 4.0);
     builder.add_c_two_terminal(p, ground, 5.0);
     builder.add_c(ground, n, 100.0);
-    builder.add_b(p, -3.0);
-    builder.add_b(n, 3.0);
-    builder.add_b(Some(branch), 6.0);
-    builder.add_b(ground, 100.0);
+    let source = circuit.elements()[0].id;
+    builder.add_source(p, -1.0, source, Waveform::Dc(3.0));
+    builder.add_source(n, 1.0, source, Waveform::Dc(3.0));
+    builder.add_source(Some(branch), 1.0, source, Waveform::Dc(6.0));
+    builder.add_source(ground, 1.0, source, Waveform::Dc(100.0));
     let system = builder.finish();
     assert_eq!(
         system.g,
@@ -87,7 +89,9 @@ fn builder_accumulates_incidence_storage_and_rhs_without_ground_entries() {
         system.c,
         DMatrix::from_diagonal(&DVector::from_vec(vec![5.0, 0.0, 0.0]))
     );
-    assert_eq!(system.b, DVector::from_vec(vec![-3.0, 3.0, 6.0]));
+    assert_eq!(system.b(), DVector::from_vec(vec![-3.0, 3.0, 6.0]));
+    // the ground term has no row and is never recorded
+    assert_eq!(system.sources.len(), 3);
 }
 
 #[test]

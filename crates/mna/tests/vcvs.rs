@@ -74,5 +74,5 @@ fn signed_gain_and_load_satisfy_the_controlled_voltage_equation() {
         &[0.0, 0.0, 0.0, 3.0],
     );
     let x = DVector::from_vec(vec![-6.0, 3.0, 3.0, 0.0]);
-    assert!((&system.g * x - &system.b).norm() < 1e-12);
+    assert!((&system.g * x - &system.b()).norm() < 1e-12);
 }

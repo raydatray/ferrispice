@@ -71,5 +71,5 @@ fn nonzero_sensing_current_satisfies_loaded_output_kcl() {
         &[0.0, 3.0, 0.0],
     );
     let x = DVector::from_vec(vec![24.0, 0.0, 3.0]);
-    assert!((&system.g * x - &system.b).norm() < 1e-12);
+    assert!((&system.g * x - &system.b()).norm() < 1e-12);
 }

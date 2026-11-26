@@ -35,7 +35,7 @@ fn solve(system: &MnaSystem, initial: &DVector<f64>, options: &NewtonOptions) ->
     let problem = NewtonProblem {
         system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     solve_newton(&problem, initial, options).unwrap().x
 }
@@ -46,7 +46,7 @@ fn converges_on_the_handout_circuit_from_zero() {
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     let solution = solve_newton(&problem, &DVector::zeros(3), &NewtonOptions::default()).unwrap();
     let vd = bisect_series_diode(1.0);
@@ -58,7 +58,7 @@ fn converges_on_the_handout_circuit_from_zero() {
     assert!(solution.iterations.len() < NewtonOptions::default().max_iterations);
 
     // the true residual at the solution satisfies KCL and the source constraint
-    let residual = &system.g * &solution.x + system.f(&solution.x).unwrap() - &system.b;
+    let residual = &system.g * &solution.x + system.f(&solution.x).unwrap() - &system.b();
     assert!(residual.amax() < 1e-12, "{residual}");
 
     // the final Jacobian is evaluated at the converged point
@@ -72,7 +72,7 @@ fn convergence_becomes_quadratic_near_the_root() {
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     let solution = solve_newton(&problem, &DVector::zeros(3), &NewtonOptions::default()).unwrap();
     let residuals: Vec<_> = solution
@@ -103,7 +103,7 @@ fn a_nearby_initial_guess_converges_quickly_to_the_same_solution() {
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     let near = DVector::from_vec(vec![1.0, 0.26, -0.005]);
     let solution = solve_newton(&problem, &near, &options).unwrap();
@@ -118,10 +118,10 @@ fn a_linear_problem_converges_to_the_direct_solution() {
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     let solution = solve_newton(&problem, &DVector::zeros(3), &NewtonOptions::default()).unwrap();
-    let direct = solve_linear(&system.g, &system.b).unwrap();
+    let direct = solve_linear(&system.g, &system.b()).unwrap();
 
     assert!((solution.x - direct).amax() < 1e-12);
     assert!(solution.iterations.len() <= 2);
@@ -132,7 +132,7 @@ fn a_linear_problem_converges_to_the_direct_solution() {
 fn supplied_a_and_r_replace_g_and_b() {
     // r = 0.5 b solves the circuit with its sources at half strength
     let system = diode_system(1.0);
-    let half = &system.b * 0.5;
+    let half = &system.b() * 0.5;
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
@@ -152,7 +152,7 @@ fn reaching_the_iteration_limit_is_nonconvergence_with_history() {
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     let options = NewtonOptions {
         max_iterations: 3,
@@ -188,7 +188,7 @@ fn a_singular_jacobian_reports_the_linear_solve_failure() {
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     let error = solve_newton(&problem, &DVector::zeros(4), &NewtonOptions::default()).unwrap_err();
 
@@ -211,7 +211,7 @@ fn overflowing_device_evaluation_fails_instead_of_returning_infinity() {
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     let error = solve_newton(&problem, &DVector::zeros(3), &NewtonOptions::default()).unwrap_err();
     let NewtonErrorKind::Device { iteration, cause } = &error.kind else {
@@ -237,7 +237,7 @@ fn mismatched_dimensions_are_rejected() {
     let problem = NewtonProblem {
         system: &system,
         a: &wrong,
-        r: &system.b,
+        r: &system.b(),
     };
     let error = solve_newton(&problem, &DVector::zeros(3), &NewtonOptions::default()).unwrap_err();
 
@@ -249,7 +249,7 @@ fn mismatched_dimensions_are_rejected() {
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     assert!(solve_newton(&problem, &DVector::zeros(2), &NewtonOptions::default()).is_err());
 }
@@ -260,7 +260,7 @@ fn iterations_record_where_each_step_linearized_and_its_residuals() {
     let problem = NewtonProblem {
         system: &system,
         a: &system.g,
-        r: &system.b,
+        r: &system.b(),
     };
     let solution = solve_newton(&problem, &DVector::zeros(3), &NewtonOptions::default()).unwrap();
     let iterations = &solution.iterations;

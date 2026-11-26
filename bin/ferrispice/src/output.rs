@@ -337,7 +337,8 @@ pub(crate) fn print_mna(circuit: &Circuit, system: &MnaSystem) -> miette::Result
         ));
     }
 
-    let b = DMatrix::from_column_slice(system.b.len(), 1, system.b.as_slice());
+    let b = system.b();
+    let b = DMatrix::from_column_slice(b.len(), 1, b.as_slice());
     let body = [
         "G x + C dx/dt + f(x) = b".to_owned(),
         unknowns.join("\n"),

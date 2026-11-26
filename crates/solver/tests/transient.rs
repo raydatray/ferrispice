@@ -133,3 +133,24 @@ fn a_singular_operating_point_is_reported_with_its_cause() {
         "{error:?}"
     );
 }
+
+const RECTIFIER: &str = "Vin n1 0 COS 1 60\nD1 n1 n2\nR1 n2 0 50\nC1 n2 0 100e-6";
+
+#[test]
+fn nonlinear_circuits_take_a_newton_solve_at_every_step() {
+    let (circuit, solution) = transient(RECTIFIER, 0.05, 1e-4);
+    let stats = solution.stats();
+    assert_eq!(stats.steps, 500);
+    assert_eq!(stats.factorizations, 0);
+    assert!(stats.newton_iterations >= stats.steps, "{stats:?}");
+    assert!(stats.max_step_iterations >= 1, "{stats:?}");
+
+    let n2 = voltage(&circuit, &solution, "n2");
+    assert!((n2[0] - 0.267314).abs() < 1e-6);
+    // the source drives n1 exactly; the diode and capacitor hold n2 up
+    for (n, &time) in solution.times().iter().enumerate() {
+        let vin = (std::f64::consts::TAU * 60.0 * time).cos();
+        assert!((voltage(&circuit, &solution, "n1")[n] - vin).abs() < 1e-9);
+        assert!(n2[n] > 0.0 && n2[n] < 0.3, "t = {time}: {}", n2[n]);
+    }
+}

@@ -30,6 +30,22 @@ pub(crate) struct Args {
     /// print every Newton-Raphson iteration and source-stepping attempt
     #[arg(long)]
     pub trace_newton: bool,
+
+    /// write every unknown at every transient time point to a CSV file;
+    /// needs .tran in the netlist
+    #[arg(long, value_name = "path")]
+    pub csv: Option<PathBuf>,
+}
+
+impl Args {
+    /// the options that only a transient analysis can satisfy
+    pub(crate) fn transient_outputs(&self) -> Vec<&'static str> {
+        let mut flags = Vec::new();
+        if self.csv.is_some() {
+            flags.push("--csv");
+        }
+        flags
+    }
 }
 
 #[cfg(test)]
@@ -69,6 +85,20 @@ mod tests {
         let args = parse_strs(&["--trace-newton", "--dump-lu", "a.cir", "--dump-mna"]).unwrap();
         assert!(args.trace_newton && args.dump_mna && args.dump_lu);
         assert!(!parse_strs(&["a.cir"]).unwrap().trace_newton);
+    }
+
+    #[test]
+    fn csv_takes_a_path() {
+        let args = parse_strs(&["a.cir", "--csv", "out/hwr.csv"]).unwrap();
+        assert_eq!(args.csv, Some(PathBuf::from("out/hwr.csv")));
+        assert_eq!(args.transient_outputs(), ["--csv"]);
+        assert!(parse_strs(&["a.cir", "--csv"]).is_err());
+        assert!(
+            parse_strs(&["a.cir"])
+                .unwrap()
+                .transient_outputs()
+                .is_empty()
+        );
     }
 
     #[test]

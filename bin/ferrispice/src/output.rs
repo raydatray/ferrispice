@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use ferrispice_circuit::{Circuit, ElementKind, Waveform};
 use ferrispice_mna::{MnaSystem, NonlinearDevice, TermSign, UnknownKind, UnknownLayout};
 use ferrispice_solver::{
@@ -81,6 +83,7 @@ pub(crate) fn print_transient(
     solution: &TransientSolution,
     stop: f64,
     step: f64,
+    written: &[&Path],
 ) -> miette::Result<()> {
     let stats = solution.stats();
     let plural =
@@ -176,6 +179,15 @@ pub(crate) fn print_transient(
                 .collect();
             lines.push(cells.join("  ").trim_end().to_owned());
         }
+    }
+
+    if !written.is_empty() {
+        lines.push(String::new());
+        lines.extend(
+            written
+                .iter()
+                .map(|path| format!("wrote {}", path.display())),
+        );
     }
 
     print_panel("transient analysis (backward Euler)", &lines.join("\n"))

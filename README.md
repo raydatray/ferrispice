@@ -1,10 +1,12 @@
 # ferrispice
 rusty spice - for ecse 472 
 
-a DC circuit simulator that reads a SPICE-style netlist, builds the modified
-nodal analysis (MNA) equations, and prints the solved unknown vector `x` with
-voltage/current labels. linear circuits are solved directly; circuits with
-diodes are solved by Newton-Raphson
+a circuit simulator that reads a SPICE-style netlist, builds the modified
+nodal analysis (MNA) equations, and runs DC and transient analyses. DC prints
+the solved unknown vector `x` with voltage/current labels; linear circuits are
+solved directly, and circuits with diodes by Newton-Raphson. transient
+analysis integrates the circuit in time with backward Euler and writes the
+waveforms to CSV and an SVG plot
 
 ## usage
 
@@ -17,6 +19,8 @@ cargo run -- examples/voltage-divider.cir --dump-lu
 cargo run -- examples/voltage-divider.cir --dump-mna --dump-lu
 cargo run -- examples/diode.cir --trace-newton
 cargo run -- examples/diode.cir --dump-mna --trace-newton --dump-lu
+cargo run -- examples/half-wave-rectifier.cir --csv out/hwr.csv --plot out/hwr.svg
+cargo run -- examples/half-wave-rectifier.cir --plot out/hwr.svg --plot-nodes n2
 cargo run -- --help
 ```
 
@@ -29,11 +33,14 @@ cargo build --release
 
 - the program loads, parses, validates, and assembles the netlist
 - a`.dc` record requests DC analysis; repeated `.dc` records still run one analysis 
-- without `.dc`, the circuit is validated, and a short summary is printed
-instead of results
 - linear circuits print a `linear DC analysis` panel; circuits with diodes
 print a `nonlinear DC analysis` panel that also says how Newton-Raphson
 converged
+- a `.tran tstop tstep` record requests a transient analysis, which prints a
+`transient analysis (backward Euler)` summary panel; `.dc` and `.tran` in the
+same netlist run both, DC first
+- without `.dc` or `.tran`, the circuit is validated, and a short summary is
+printed instead of results
 
 ### examples
 
@@ -49,10 +56,15 @@ cargo run -- examples/diode.cir
 cargo run -- examples/diode-reverse.cir
 cargo run -- examples/diode-source-stepping.cir
 cargo run -- examples/diode-mixed.cir
+cargo run -- examples/half-wave-rectifier.cir
+cargo run -- examples/rc-lowpass.cir
+cargo run -- examples/rl-cos.cir
 ```
 
 ### `--dump-mna` 
 - prints `G`, `C`, `f(x)`, `b`, and the unknown ordering before solving
+- with time-varying sources, the numeric vector is labeled `b(0)`, and `b(t)`
+follows symbolically, for example `branch Vin  cos(2π·60·t)`
 - rows are labeled `KCL <node>` for node equations and `branch <element>` for branch constraints 
 - `f(x)` is printed symbolically: the signed diode currents in each row,
 then each diode's equation in terms of the unknowns
@@ -98,19 +110,27 @@ iterations), followed by each attempt's iterations
 ## netlist syntax
 
 - the first line is the circuit title, even if it starts with `*`
-- `.end` terminates the input, and `.dc` may appear anywhere before it
+- `.end` terminates the input, and `.dc` and `.tran` may appear anywhere
+before it; a second `.tran` is an error
 - blank lines and full-line `*` comments are ignored
-- prefixes, directives, and `DC` are case-insensitive
+- prefixes, directives, and the source modes `DC`, `COS`, and `SIN` are
+case-insensitive
 - node `0` is ground, and at least one element terminal must connect to it; a control port sensing `0` does not count
-- values use decimal or scientific notation: `100`, `-2.5`, `1e-6`, `4.7E3`.
-engineering suffixes such as `1k` are not accepted
+- values use decimal or scientific notation, optionally followed by a SPICE
+scale and unit letters: `100`, `-2.5`, `1e-6`, `4.7k`, `100uF`, `0.1ms`.
+scales are `t g meg k m u n p f mil`, case-insensitive; `m` and `M` are milli,
+and mega is `meg`. other trailing letters are units and are ignored
 
 ```text
 R1 p n resistance
 C1 p n capacitance
 L1 p n inductance
 V1 p n DC voltage
+V1 p n COS amplitude frequency
+V1 p n SIN amplitude frequency
 I1 p n DC current
+I1 p n COS amplitude frequency
+I1 p n SIN amplitude frequency
 VCVS1 p n cp cn gain
 VCCS1 p n cp cn transconductance
 CCVS1 p n controlling_element transresistance
@@ -118,15 +138,23 @@ CCCS1 p n controlling_element gain
 D1 anode cathode
 ```
 
+- `COS amplitude frequency` is `amplitude * cos(2π · frequency · t)` and
+`SIN amplitude frequency` is `amplitude * sin(2π · frequency · t)`; the
+frequency must be positive. DC analysis uses a source's value at `t = 0`
 - diodes have no parameters in the netlist; every diode uses
 `Is = 1e-15 A` and `Vt = 0.025 V`
+- `.tran tstop tstep` runs from 0 to `tstop` with step `tstep`; both must be
+positive with `tstep <= tstop`, and a final partial step lands exactly on
+`tstop`
 
 ## equations
 
-the circuit becomes `G x + C dx/dt + f(x) = b`. the unknowns `x` are non-ground
+the circuit becomes `G x + C dx/dt + f(x) = b(t)`. the unknowns `x` are non-ground
 node voltages followed by currents through voltage sources, inductors, VCVS,
 and CCVS, in element order. ground has no row or column. `f(x)` holds the
-nonlinear diode currents leaving each node; diodes add no unknowns
+nonlinear diode currents leaving each node; diodes add no unknowns. `b(t)`
+is stored as each independent source's signed contribution to a row, and
+evaluated at any time; DC uses `b = b(0)`
 
 | element | stamp |
 | --- | --- |
@@ -186,6 +214,29 @@ a diode cannot carry more than `Is` in reverse, so a current source forcing
 more than that backwards through a lone diode has no solution and fails with
 a diagnostic
 
+### transient analysis
+
+backward Euler replaces `dx/dt` at the new point with
+`(x_{n+1} - x_n) / h`, so each step solves
+
+```text
+(G + C/h) x_{n+1} + f(x_{n+1}) = b(t_{n+1}) + (C/h) x_n
+```
+
+- the initial state `x_0` is the DC operating point: sources at `t = 0`,
+capacitors open, inductors shorted
+- time points are `t_n = n h`, computed by multiplication rather than repeated
+addition so they do not drift
+- linear circuits factor `G + C/h` once per step size, then each step is one
+LU back-substitution with the usual residual check
+- nonlinear circuits solve each step with Newton-Raphson on
+`A x + f(x) - r = 0`, with `A = G + C/h` and `r = b(t_{n+1}) + (C/h) x_n`,
+starting from `x_n`
+- if Newton fails for a whole step, the step is subdivided adaptively,
+doubling after success and halving after failure down to `h * 1e-9`; only the
+end of the step is recorded
+- a capacitor's current is `C (v_{n+1} - v_n) / h`, zero at `t = 0`
+
 ### libraries
 
 ```rust
@@ -195,18 +246,20 @@ let system = ferrispice_mna::assemble(&circuit)?;    // G, C, b, f(x), and layou
 let solution = ferrispice_solver::solve_dc(&circuit)?;
 let v = solution.node_voltage(circuit.find_node("n2").unwrap());
 let i = solution.element_current(circuit.find_element("D1").unwrap());
+let waveforms = ferrispice_solver::solve_transient(&circuit, 0.05, 1e-4)?;
+let v2 = waveforms.node_voltage(circuit.find_node("n2").unwrap()); // one per time point
 ```
 
 `ferrispice_solver::solve_newton` solves any `A x + f(x) - r = 0` from a
 supplied initial guess, and `ferrispice_solver::advance` steps a parameter
 adaptively, doubling on success and halving on failure; DC analysis uses
-them for source stepping, and transient analysis can reuse them per time
-step
+them for source stepping, and transient analysis reuses them for each time
+step and for subdividing steps where Newton fails
 
 | Path | Responsibility |
 | --- | --- |
-| `crates/netlist` | netlist parsing, positions, byte spans |
-| `crates/circuit` | typed circuit model, diode defaults, name resolution, validation |
-| `crates/mna` | unknown layout, element stamps, `f(x)` and its Jacobian |
-| `crates/solver` | dense LU, Newton-Raphson, adaptive stepping, DC results |
-| `bin/ferrispice` | arguments, files, output, diagnostics |
+| `crates/netlist` | netlist parsing, scale suffixes, positions, byte spans |
+| `crates/circuit` | typed circuit model, source waveforms, diode defaults, name resolution, validation |
+| `crates/mna` | unknown layout, element stamps, `b(t)`, `f(x)` and its Jacobian |
+| `crates/solver` | dense LU, Newton-Raphson, adaptive stepping, DC and transient results |
+| `bin/ferrispice` | arguments, files, output, CSV, SVG plots, diagnostics |

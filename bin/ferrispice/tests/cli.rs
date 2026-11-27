@@ -1346,3 +1346,30 @@ fn plot_flags_need_a_transient_and_a_plot() {
     assert_eq!(output.status.code(), Some(2));
     assert_usage(&output.stderr);
 }
+
+#[test]
+fn help_documents_the_transient_options_and_argument_order() {
+    let output = run(&[OsStr::new("--help")]);
+    assert!(output.status.success());
+    // drop the ANSI styling forced on by `run`
+    let mut text = String::new();
+    let mut escaped = false;
+    for character in String::from_utf8(output.stdout).unwrap().chars() {
+        match (escaped, character) {
+            (false, '\u{1b}') => escaped = true,
+            (true, 'm') => escaped = false,
+            (false, character) => text.push(character),
+            (true, _) => {}
+        }
+    }
+    let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for expected in [
+        "--csv <path>",
+        "--plot <path>",
+        "--plot-nodes <nodes>",
+        ".tran tstop tstep",
+        "the reverse of standard SPICE's .tran tstep tstop",
+    ] {
+        assert!(words.contains(expected), "{expected}\n{text}");
+    }
+}

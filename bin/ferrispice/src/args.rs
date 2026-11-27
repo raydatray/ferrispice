@@ -4,12 +4,16 @@ use clap::Parser;
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "parse, validate, and assemble a circuit netlist",
-    long_about = "parse, validate, and assemble a circuit netlist.\n\n\
+    about = "parse, validate, and simulate a circuit netlist",
+    long_about = "parse, validate, and simulate a circuit netlist.\n\n\
         A .dc record in the netlist requests DC analysis and prints the MNA \
         unknown vector: non-ground node voltages and explicit branch currents. \
         Linear circuits are solved directly; circuits with diodes are solved by \
         Newton-Raphson, ramping the sources up from zero if needed.\n\n\
+        A .tran tstop tstep record requests a transient analysis by backward \
+        Euler from the DC operating point, and prints a summary; --csv and \
+        --plot write the waveforms. Note the argument order: the stop time \
+        comes first, the reverse of standard SPICE's .tran tstep tstop.\n\n\
         Positive current flows from an element's first terminal to its second."
 )]
 pub(crate) struct Args {

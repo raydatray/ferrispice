@@ -1,0 +1,9 @@
+RL circuit driven by a cosine
+* tau = L1 / R1 = 1 ms and the source is 1 V at 100 Hz. The inductor is a
+* short at the DC operating point, so I(L1) starts at 1 V / 10 ohm = 0.1 A,
+* then follows the RC response shape scaled by 1 / R1
+Vin in 0 COS 1 100Hz
+R1 in mid 10
+L1 mid 0 10mH
+.tran 20ms 0.1ms
+.end

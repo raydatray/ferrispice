@@ -1,0 +1,10 @@
+RC low-pass filter driven by a cosine
+* tau = R1 C1 = 1 ms and the source is 1 V at 100 Hz. Starting from the DC
+* operating point V(out) = 1 V, the exact response is
+*   A cos(w t - phi) + (1 - A cos(phi)) exp(-t / tau)
+* with A = 1 / sqrt(1 + (w tau)^2) = 0.847 and phi = atan(w tau) = 32.1 degrees
+Vin in 0 COS 1 100Hz
+R1 in out 1k
+C1 out 0 1uF
+.tran 20ms 0.1ms
+.end
